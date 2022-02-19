@@ -34,7 +34,7 @@ NOAA_OBS_Detided_region3 <- read.csv('data/NOAA_OBS_Detided_region3.csv')
 
 
 ```{r clean data, warning = F}
-# Lewisetta was excluded from ADC_POST_Detided before import so remove from df_meta_region3 and NOAA_OBS_Detided_region3 for consistency
+# Lewisetta was excluded from ADC_POST_Detided before import so remove from df_meta_region3 and   NOAA_OBS_Detided_region3 for consistency
 
 # pull Lewisetta's station id
 raw_Lewisetta_station_id <- df_meta_region3 %>%
@@ -56,7 +56,7 @@ NOAA_OBS_Detided_region3 <- NOAA_OBS_Detided_region3 %>%
 df_meta_region3 <- df_meta_region3 %>%
   filter(stationname != 'Lewisetta')
 
-# First, clean meta data
+# Now, clean meta data
 
 clean_metadata <- function(metadata) {
 
@@ -121,6 +121,9 @@ sum_na <- function(x) sum(is.na(x))
 
 prop_na <- function(x) sum_na(x)/length(x)
 
+# computes row index of NA values
+
+which_na <- function(x) which(is.na(x) == T)
 
 # if the proportion of NA values in a station (whether overall or within a year) exceeds this then it will be flagged for removal
 
@@ -132,7 +135,7 @@ overview_na <- function(timeseries, threshold, group_by_year = F) {
 
     df1 <- timeseries %>%
             select(-TIME, -year, -month) %>%
-            summarise_all(prop_na) >=  threshold
+            summarise_all(prop_na) >  threshold
     
   # returns vector of station names to be excluded
     
@@ -147,7 +150,7 @@ overview_na <- function(timeseries, threshold, group_by_year = F) {
             select(-TIME, -month) %>%
             group_by(year) %>%
             summarise_all(prop_na) %>%
-            select(-year) >= threshold
+            select(-year) > threshold
     
   # list which contains the names of the stations which should be removed for each year. The first element              corresponds to the year 1979, the second 1980 and so on.
     
@@ -170,10 +173,21 @@ overview_na <- function(timeseries, threshold, group_by_year = F) {
     
 }
 
-overview_na(ADC_POST_Detided_region3, 0)
+# check if station should be excluded
+
+overview_na(ADC_POST_Detided_region3, .1)
+
+# check if year should  be excluded
+
+overview_na(ADC_POST_Detided_region3, .1, T)
+
+# check if there are any NAs in a given year at all
+
 overview_na(ADC_POST_Detided_region3, 0, T)
-overview_na(NOAA_OBS_Detided_region3, 0)
-overview_na(NOAA_OBS_Detided_region3, 1, T)
+
+# here it is
+
+NOAA_OBS_Detided_na <- overview_na(NOAA_OBS_Detided_region3, .1, T)
 ```
 
 *Interactive Map of Stations*
@@ -193,7 +207,7 @@ ggplot() +
   theme_nothing()
 ```
 
-```{r examine time-series, cache = T}
+```{r examine time-series}
 # plot timer-series for each station in FEMA region 3 over specified time-interval
 for(station in df_meta_region3$stationname[1:3]) {
   
@@ -209,19 +223,29 @@ for(station in df_meta_region3$stationname[1:3]) {
 
 ```{r create yearly maxima time-series}
 # create data frame with yearly maxima for each station
-df_max <- ADC_POST_Detided_region3 %>%
+ 
+df_max <- ADC_POST_Detided_region3 %>% 
   select(-TIME, -month) %>%
   group_by(year) %>%
-  summarise_all(max)
+  summarise_all(max, na.rm = T)
 
 # change year from class character to numeric
+
 df_max <- df_max %>%
   mutate(year = as.numeric(year))
-```
 
+# compute block maxima for given station using only those years which the proportion of NAs are < threshold
+
+NOAA_OBS_Detided_region3 %>%
+      select(year, Portland) %>%
+      filter(!year %in% NOAA_OBS_Detided_na$Portland) %>%
+      group_by(year) %>%
+      summarise(max = max(Portland, na.rm = T))
+```
 
 ```{r plot yearly maxima, warning = F}
 # plot yearly maxima
+
 for(station in df_meta_region3$stationname[1:3]) {
   
   df_max %>%
