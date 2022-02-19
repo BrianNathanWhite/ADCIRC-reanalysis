@@ -1,0 +1,235 @@
+---
+title: "ADCIRC Reanalysis"
+author: "Brian N. White"
+date: "2/19/2022"
+output: html_document
+---
+
+```{r, include = F}
+library(tidyverse)
+library(SpatialExtremes)
+library(maps)
+library(ggmap)
+library(sf)
+```
+
+
+### Data Description
+
+1. df_meta_region3.csv: Contains spatial and identifying information for each NOAA sea-level observation station. There are 26 rows and 6 columns. Each row is a station, each column an identifying or spatial station feature. The stations range the entire U.S. East Coast.
+
+2. ADC_POST_Detided_region3.csv: Contains hourly ADC_POST_Detided time-series data for each NOAA sea-level observation station. The time-series spans the 40-year period from 1979-01-01 01:00:00 to 2019-12-31 23:00:00. There are 359400 rows and 28 columns. Each row is an hourly observation and, except for TIME and year, each column is a station,
+
+3. ADC_NOAA_OBS_region3.csv: Identical structure as ADC_POST_Detided_region3 but for hourly NOAA_OBS_Detided time-series data.
+
+*Import and clean data*
+
+```{r import and clean data, warning = F}
+# load data
+
+df_meta_region3 <- read.csv('data/df_meta_region3.csv')
+ADC_POST_Detided_region3 <- read.csv('data/ADC_POST_Detided_region3.csv')
+NOAA_OBS_Detided_region3 <- read.csv('data/NOAA_OBS_Detided_region3.csv')
+```
+
+
+```{r clean data, warning = F}
+# Lewisetta was excluded from ADC_POST_Detided before import so remove from df_meta_region3 and NOAA_OBS_Detided_region3 for consistency
+
+# pull Lewisetta's station id
+raw_Lewisetta_station_id <- df_meta_region3 %>%
+    filter(stationname == !!'Lewisetta') %>%
+    select(stationid) %>%
+    pull()
+
+# add X to beginning of station id to match column name in ADC_POST_Detided
+
+Lewisetta_station_id <- paste('X', raw_Lewisetta_station_id, sep = '')
+
+# remove Lewisetta from NOAA_OBS_Detided_region3
+
+NOAA_OBS_Detided_region3 <- NOAA_OBS_Detided_region3 %>%
+  select(-Lewisetta_station_id)
+
+# remove Lewisetta from df_meta_region3
+
+df_meta_region3 <- df_meta_region3 %>%
+  filter(stationname != 'Lewisetta')
+
+# First, clean meta data
+
+clean_metadata <- function(metadata) {
+
+  # remove white-space from station names as this can lead to conflicts with ggplot
+  
+  metadata$stationname <- str_replace_all(metadata$stationname, " ", "")
+  
+  return(metadata)
+
+}
+
+# Then, clean the time-series
+
+clean_timeseries <- function(timeseries, metadata) {
+  
+  # coerce time variable to POSIX class
+  
+  timeseries$TIME <- as.POSIXct(timeseries$TIME, format = "%Y-%m-%d %H:%M:%S")
+  
+  # create year and month variables from TIME column
+  
+  timeseries <- add_column(timeseries,  year = format(timeseries$TIME, '%Y'), month = format(timeseries$TIME,    '%m'), .after = 1)
+  
+  # rename columns with station name
+  
+  for(station in metadata$stationname){
+
+  # extract station id
+    
+  raw_station_id <- metadata %>%
+    filter(stationname == !!station) %>%
+    select(stationid) %>%
+    pull()
+
+  # add an X to the beginning to match current variable names
+  
+  station_id <- paste('X', raw_station_id, sep = '')
+
+  # rename columns for ease of use
+  
+  timeseries <- timeseries %>%
+    rename(!!station := station_id)
+  }
+  
+  return(timeseries)
+
+}
+
+# clean meta data and corresponding time-series under consideration
+
+df_meta_region3 <- clean_metadata(df_meta_region3)
+ADC_POST_Detided_region3 <- clean_timeseries(ADC_POST_Detided_region3, df_meta_region3)
+NOAA_OBS_Detided_region3 <- clean_timeseries(NOAA_OBS_Detided_region3, df_meta_region3)
+```
+
+```{r check for missing values, warning = F}
+# computes the number of NA values
+
+sum_na <- function(x) sum(is.na(x))
+
+# computes proportion of NA values
+
+prop_na <- function(x) sum_na(x)/length(x)
+
+
+# if the proportion of NA values in a station (whether overall or within a year) exceeds this then it will be flagged for removal
+
+overview_na <- function(timeseries, threshold, group_by_year = F) {
+  
+  if(group_by_year == F) {
+
+  # computes the proportion of NA values as each station and then returns T or F if value exceeds threshold
+
+    df1 <- timeseries %>%
+            select(-TIME, -year, -month) %>%
+            summarise_all(prop_na) >=  threshold
+    
+  # returns vector of station names to be excluded
+    
+            stations_to_exclude <- df_meta_region3$stationname[df1]
+            return(stations_to_exclude)
+            
+  } else {
+    
+  # computes the proportion of NA values for each year for each station
+    
+    df1 <- timeseries %>%
+            select(-TIME, -month) %>%
+            group_by(year) %>%
+            summarise_all(prop_na) %>%
+            select(-year) >= threshold
+    
+  # list which contains the names of the stations which should be removed for each year. The first element              corresponds to the year 1979, the second 1980 and so on.
+    
+    years_to_exclude <- list()
+    
+    # fill the list
+    
+    for(station in 1:ncol(df1)) {
+      
+    df2 <- df1[, station]
+    
+            years_to_exclude_by_station <- unique(timeseries$year)[df2]
+            years_to_exclude[[station]] <- years_to_exclude_by_station
+    }
+    
+    names(years_to_exclude) <- df_meta_region3$stationname
+    return(years_to_exclude)
+  
+  }
+    
+}
+
+overview_na(ADC_POST_Detided_region3, 0)
+overview_na(ADC_POST_Detided_region3, 0, T)
+overview_na(NOAA_OBS_Detided_region3, 0)
+overview_na(NOAA_OBS_Detided_region3, 1, T)
+```
+
+*Interactive Map of Stations*
+
+[kepler.gl](https://kepler.gl/demo/map?mapUrl=https://dl.dropboxusercontent.com/s/jdmoouleyema7z1/keplergl_s3tjnff.json)
+
+```{r produce map of stations, warning = F}
+states <- map_data("state")
+
+east_coast <- states %>%
+  filter(region %in% c('florida', 'georgia', 'south carolina', 'north carolina', 'virginia', 'district of columbia', 'pennsylvania', 'maryland', 'delaware', 'new jersey', 'connecticut', 'new york', 'rhode island', 'massachusetts', 'vermont', 'new hampshire', 'maine' ))
+
+ggplot() + 
+  geom_polygon(data = east_coast, aes(x = long, y = lat, group = group, fill = group), color = "white") +
+  geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'red', size = .8) +
+  guides(fill = F) +
+  theme_nothing()
+```
+
+```{r examine time-series, cache = T}
+# plot timer-series for each station in FEMA region 3 over specified time-interval
+for(station in df_meta_region3$stationname[1:3]) {
+  
+  ADC_POST_Detided_region3 %>%
+  select(TIME, station) %>%
+  filter('1979-01-01 01:00:00' <= TIME, TIME <= '2019-12-31 23:00:00') %>%
+  ggplot(aes_string(x = 'TIME', y = station)) +
+  geom_line(alpha = 0.5, col = 'blue', size = 0.1) -> p
+  
+  print(p)
+}
+```
+
+```{r create yearly maxima time-series}
+# create data frame with yearly maxima for each station
+df_max <- ADC_POST_Detided_region3 %>%
+  select(-TIME, -month) %>%
+  group_by(year) %>%
+  summarise_all(max)
+
+# change year from class character to numeric
+df_max <- df_max %>%
+  mutate(year = as.numeric(year))
+```
+
+
+```{r plot yearly maxima, warning = F}
+# plot yearly maxima
+for(station in df_meta_region3$stationname[1:3]) {
+  
+  df_max %>%
+  select(year, station) %>%
+  ggplot(aes_string(x = 'year', y = station)) +
+  geom_point(alpha = 0.5, col = 'blue') -> p
+  
+  print(p)
+  
+}
+```
