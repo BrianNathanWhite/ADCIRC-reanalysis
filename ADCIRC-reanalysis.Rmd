@@ -5,8 +5,14 @@ date: "2/19/2022"
 output: html_document
 ---
 
+```{r}
+knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F)
+```
+
+
 ```{r, include = F}
 library(tidyverse)
+library(reshape2)
 library(extRemes)
 library(SpatialExtremes)
 library(maps)
@@ -17,7 +23,7 @@ library(sf)
 
 ### Data Description
 
-1. df_meta_region3.csv: Contains spatial and identifying information for each NOAA sea-level observation station. There are 26 rows and 6 columns. Each row is a station, each column an identifying or spatial station feature. The stations range the entire U.S. East Coast.
+1. df_meta_region3.csv: Contains identifying information for each NOAA sea-level observation station (i.e. lat/lon coordinates, state, node, name, id). There are 26 rows and 6 columns. Each row is a station, each column an identifying or spatial station feature. The stations range the entire U.S. East Coast.
 
 2. ADC_POST_Detided_region3.csv: Contains hourly ADC_POST_Detided time-series data for each NOAA sea-level observation station. The time-series spans the 40-year period from 1979-01-01 01:00:00 to 2019-12-31 23:00:00. There are 359400 rows and 28 columns. Each row is an hourly observation and, except for TIME and year, each column is a station,
 
@@ -25,7 +31,7 @@ library(sf)
 
 *Import and clean data*
 
-```{r import and clean data, warning = F}
+```{r import and clean data, warning = F, message = F}
 # load data
 df_meta_region3 <- read.csv('data/df_meta_region3.csv')
 ADC_POST_Detided_region3 <- read.csv('data/ADC_POST_Detided_region3.csv')
@@ -33,7 +39,7 @@ NOAA_OBS_Detided_region3 <- read.csv('data/NOAA_OBS_Detided_region3.csv')
 ```
 
 
-```{r clean data, warning = F}
+```{r clean data, warning = F, message = F}
 # Lewisetta was excluded from ADC_POST_Detided before import so remove from df_meta_region3 and   NOAA_OBS_Detided_region3 for consistency
 
 # pull Lewisetta's station id
@@ -150,6 +156,11 @@ overview_na <- function(timeseries, threshold, group_by_year = F) {
   }
     
 }
+
+# returns stations that are missing more than 10% of their observations
+overview_na(NOAA_OBS_Detided_region3, .1)
+# for each station this returns the years that are missing more than 10% of their observations
+overview_na(NOAA_OBS_Detided_region3, .1, T)
 ```
 
 *Interactive Map of Stations*
@@ -164,23 +175,48 @@ east_coast <- states %>%
 
 ggplot() + 
   geom_polygon(data = east_coast, aes(x = long, y = lat, group = group, fill = group), color = "white") +
-  geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'red', size = .8) +
+  geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = .8) +
+  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'red') +
   guides(fill = F) +
   theme_nothing()
 ```
 
-```{r examine time-series}
-# plot timer-series for each station in FEMA region 3 over specified time-interval
-for(station in df_meta_region3$stationname[1:26]) {
-  
-  ADC_POST_Detided_region3 %>%
-  select(TIME, station) %>%
-  filter('1979-01-01 01:00:00' <= TIME, TIME <= '1980-01-01 23:00:00') %>%
-  ggplot(aes_string(x = 'TIME', y = station)) +
-  geom_line(alpha = 0.5, col = 'blue', size = 0.1) -> p
-  
-  print(p)
-}
+*Exploratory Data Analaysis*
+
+```{r examine time-series, cache = T}
+# plot timer-series for each station in FEMA region 3 simultaneously over specified time-interval
+ADC_POST_Detided_region3 %>%
+  filter('1979-01-01 0:00:00' <= TIME, TIME <= '1980-01-01 0:00:00') %>%
+  melt(id.vars = c('TIME', 'year', 'month')) %>%
+  ggplot(aes(x = TIME, y = value)) +
+  geom_line(alpha = 0.5, col = 'blue', size = 0.1) +
+  theme(axis.text.x = element_blank()) +
+  facet_wrap(~variable)
+
+# plot side-by-side box plots and violin plots for each station
+ADC_POST_Detided_region3 %>%
+  select(-TIME, -year, -month) %>%
+  melt() %>%
+  ggplot(aes(x = value, y = variable)) +
+  geom_boxplot(outlier.size = 0.1)
+
+ADC_POST_Detided_region3 %>%
+  select(-TIME, -year, -month) %>%
+  melt() %>%
+  ggplot(aes(x = value, y = variable)) +
+  geom_violin(outlier.size = 0.1)
+
+ADC_POST_Detided_region3 %>%
+  melt(id.vars = c('TIME', 'year', 'month')) %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(color = 'light blue') +
+  facet_wrap(~variable)
+
+ADC_POST_Detided_region3 %>%
+  melt(id.vars = c('TIME', 'year', 'month')) %>%
+  ggplot(aes(x = value)) +
+  geom_density(color = 'light blue') +
+  facet_wrap(~variable)
 ```
 
 ```{r create yearly maxima time-series}
@@ -217,34 +253,37 @@ for(station in colnames(timeseries[, 4:ncol(timeseries)])) {
 ADC_POST_Detided_max <- max_timeseries(ADC_POST_Detided_region3, threshold = 0.1)
 NOAA_OBS_Detided_max <- max_timeseries(NOAA_OBS_Detided_region3, threshold = 0.1)
 
-# compute kernal density estimate of each stations block maxima timeseries
-density_max <- function(timeseries) {
-for(i in 1:length(timeseries)) {
-  
-  density_max <- timeseries[[i]] %>%
-                    ggplot(aes(x = max)) +
-                    geom_density(col = 'blue') +
-                    labs(title = labels(timeseries)[i])
-  
-  print(density_max)
-}
-}
+# visualize the block-maxima through time-seires, box plots, violin plots, histograms and density plots.
+df_max %>%
+  as.tibble() %>%
+  melt(id.vars = c('year')) %>%
+  ggplot(aes(x = year, y = value)) +
+  geom_line(col = 'light blue') +
+  facet_wrap(~variable)
 
-timeseries_max <- function(timeseries) {
-for(i in 1:length(timeseries)) {
-  
-  timeseries_max <- timeseries[[i]] %>%
-                    ggplot(aes(x = as.numeric(year), y = max)) +
-                    geom_line(col = 'light blue') +
-                    labs(x = 'year', title = labels(timeseries)[i])
-  
-  print(timeseries_max)
-}
-}
+df_max %>%
+  select(-year) %>%
+  melt() %>%
+  ggplot(aes(x = value, y = variable)) +
+  geom_boxplot(outlier.size = 0.01) 
 
+df_max %>%
+  select(-year) %>%
+  melt() %>%
+  ggplot(aes(x = value, y = variable)) +
+  geom_violin(outlier.size = 0.01) 
 
-density_max(ADC_POST_Detided_max)
-density_max(NOAA_OBS_Detided_max)
-timeseries_max(ADC_POST_Detided_max)
-timeseries_max(NOAA_OBS_Detided_max)
+df_max %>%
+  as.tibble() %>%
+  melt(id.vars = c('year')) %>%
+  ggplot(aes(x = value)) +
+  geom_histogram(col = 'light blue') +
+  facet_wrap(~variable)
+
+df_max %>%
+  as.tibble() %>%
+  melt(id.vars = c('year')) %>%
+  ggplot(aes(x = value)) +
+  geom_density(col = 'light blue') +
+  facet_wrap(~variable)
 ```
