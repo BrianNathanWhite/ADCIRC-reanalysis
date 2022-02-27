@@ -2,19 +2,26 @@
 title: "ADCIRC Reanalysis"
 author: "Brian N. White"
 date: "2/19/2022"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
-```{r}
-knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F)
+```{r, include = F}
+knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F, tidy=TRUE)
 ```
 
 
 ```{r, include = F}
+# data wrangling
 library(tidyverse)
 library(reshape2)
+
+# extreme value analysis
 library(extRemes)
 library(SpatialExtremes)
+
+# working with spatial data
 library(maps)
 library(ggmap)
 library(sf)
@@ -23,13 +30,13 @@ library(sf)
 
 ### Data Description
 
-1. df_meta_region3.csv: Contains identifying information for each NOAA sea-level observation station (i.e. lat/lon coordinates, state, node, name, id). There are 26 rows and 6 columns. Each row is a station, each column an identifying or spatial station feature. The stations range the entire U.S. East Coast.
+1. df_meta_region3.csv: Contains identifying information for each NOAA sea-level observation station (i.e. lat/lon coordinates, state, node, name, id). There are 26 rows and 6 columns. Each row is a station, each column an identifying feature. The stations range the majority of the U.S. East Coast but the focus is FEMA region 3.
 
 2. ADC_POST_Detided_region3.csv: Contains hourly ADC_POST_Detided time-series data for each NOAA sea-level observation station. The time-series spans the 40-year period from 1979-01-01 01:00:00 to 2019-12-31 23:00:00. There are 359400 rows and 28 columns. Each row is an hourly observation and, except for TIME and year, each column is a station,
 
 3. ADC_NOAA_OBS_region3.csv: Identical structure as ADC_POST_Detided_region3 but for hourly NOAA_OBS_Detided time-series data.
 
-*Import and clean data*
+### Data Wrangling
 
 ```{r import and clean data, warning = F, message = F}
 # load data
@@ -163,6 +170,8 @@ overview_na(NOAA_OBS_Detided_region3, .1)
 overview_na(NOAA_OBS_Detided_region3, .1, T)
 ```
 
+### Exploratory Data Analysis
+
 *Interactive Map of Stations*
 
 [kepler.gl](https://kepler.gl/demo/map?mapUrl=https://dl.dropboxusercontent.com/s/jdmoouleyema7z1/keplergl_s3tjnff.json)
@@ -181,7 +190,7 @@ ggplot() +
   theme_nothing()
 ```
 
-*Exploratory Data Analaysis*
+*1. ADCIRC_POST_Detided*
 
 ```{r examine time-series, cache = T}
 # plot timer-series for each station in FEMA region 3 simultaneously over specified time-interval
@@ -204,7 +213,7 @@ ADC_POST_Detided_region3 %>%
   select(-TIME, -year, -month) %>%
   melt() %>%
   ggplot(aes(x = value, y = variable)) +
-  geom_violin(outlier.size = 0.1)
+  geom_violin()
 
 ADC_POST_Detided_region3 %>%
   melt(id.vars = c('TIME', 'year', 'month')) %>%
@@ -218,6 +227,8 @@ ADC_POST_Detided_region3 %>%
   geom_density(color = 'light blue') +
   facet_wrap(~variable)
 ```
+
+*2. Yearly maxima of ADCIRC POST Detided*
 
 ```{r create yearly maxima time-series}
 # create data frame with yearly maxima for each station
@@ -271,7 +282,7 @@ df_max %>%
   select(-year) %>%
   melt() %>%
   ggplot(aes(x = value, y = variable)) +
-  geom_violin(outlier.size = 0.01) 
+  geom_violin() 
 
 df_max %>%
   as.tibble() %>%
@@ -287,3 +298,83 @@ df_max %>%
   geom_density(col = 'light blue') +
   facet_wrap(~variable)
 ```
+
+### Statistical Modeling
+
+```{r return level plots}
+# compute return levels associated with return period 1/p
+gev_results <- function(p, gev) {
+
+  gev_param <- gev$results$par
+  
+  y_p <- -log(1 - p)
+  
+  # compute return level associated with return period 1/p
+  if(gev_param[3] == 0) {
+    
+    rl <- as.numeric(gev_param[1] - gev_param[2]*log(y_p))
+    
+  } else {
+    rl <-as.numeric(gev_param[1] - (gev_param[2]/gev_param[3])*(1 - y_p^-gev_param[3]))
+  }
+  
+  # compute gradient of return level associated with return period 1/p
+  rl_grad <- c(1, (-gev_param[3]^-1)*(1 - y_p^-gev_param[3]), gev_param[2]*(gev_param[3]^-2)*(1 - y_p^-gev_param[3]) - gev_param[2]*(gev_param[3]^-1)*(y_p^-gev_param[3])*log(y_p))
+  
+  # compute variance matrix of return level associated with return period 1/p via delta method
+  gev_cov <- solve(gev$results$hessian)
+  rl_var <-  t(rl_grad) %*% gev_cov %*% rl_grad
+  
+  result <- c(rl, rl_var)
+  
+  
+  return(result)
+  
+}
+
+# generate return level plot over given return period sequence
+gev_rl_plot <- function(periods, gev, alpha, station_name) {
+  
+rl <- vector()
+ci_upper <- vector()
+ci_lower <- vector()
+
+for(i in 1:length(periods)) {
+  
+  rl[i] <- gev_results(periods[i], gev)[1]
+  ci_upper[i] <- rl[i] + qnorm(1 - alpha/2)*sqrt(gev_results(periods[i], gev)[2])
+  ci_lower[i] <- rl[i] - qnorm(1 - alpha/2)*sqrt(gev_results(periods[i], gev)[2])
+
+}
+
+p <- data.frame(y_p = -1/log(1 - periods), rl = rl, ci_upper = ci_upper, ci_lower = ci_lower) %>%
+  ggplot() +
+  scale_x_log10() +
+  geom_line(aes(x = y_p, y = rl), color = 'light blue') +
+  geom_line(aes(x = y_p, y = ci_upper), color = 'green', linetype = 'dashed') +
+  geom_line(aes(x = y_p, y = ci_lower), color = 'green', linetype = 'dashed') +
+  labs(title = station_name, y = 'return level')
+
+return(p)
+
+}
+
+# specify return period sequence
+periods <- seq(1/1000, 1/2, length.out = 100)[100:1]
+
+# generate return level plot for each station
+
+for(i in 2:27) {
+  
+gev <- fevd(df_max[[i]], type = 'GEV')
+
+print(gev_rl_plot(periods, gev, 0.05, labels(df_max)[[2]][i]))
+
+}
+
+for(i in 2:27) {
+gev <- fevd(df_max[[i]], type = 'GEV')
+plot(gev, type = 'rl', main = labels(df_max)[[2]][i])
+}
+```
+
