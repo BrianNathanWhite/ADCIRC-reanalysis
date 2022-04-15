@@ -3,8 +3,8 @@ title: "ADCIRC Reanalysis"
 author: "Brian N. White"
 date: "2/19/2022"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 
 ```{r, include = F}
@@ -13,18 +13,31 @@ knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F, tidy=TRUE)
 
 
 ```{r, include = F}
-# data wrangling
+# data wrangling & visualization
 library(tidyverse)
 library(reshape2)
+library(GGally)
+library(Matrix)
+
+# supplementary distributions
+library(mvtnorm)
 
 # extreme value analysis
 library(extRemes)
 library(SpatialExtremes)
+library(climextRemes)
+
+# Bayesian non-stationary gaussian processes
+library(BayesNSGP)
+
+# MCMC
+library(nimble)
 
 # working with spatial data
 library(maps)
 library(ggmap)
-library(sf)
+library(geosphere)
+# library(sf)
 ```
 
 
@@ -129,7 +142,7 @@ overview_na <- function(timeseries, threshold, group_by_year = F) {
 
         # computes the proportion of NA values as each station and then returns T or F if value exceeds threshold
         df1 <- timeseries %>%
-            select(-TIME, -year, -month) %>%
+            dplyr::select(-TIME, -year, -month) %>%
             summarise_all(prop_na) >  threshold
     
             # returns vector of station names to be excluded
@@ -140,10 +153,10 @@ overview_na <- function(timeseries, threshold, group_by_year = F) {
     
     # computes the proportion of NA values for each year for each station
     df1 <- timeseries %>%
-            select(-TIME, -month) %>%
+            dplyr::select(-TIME, -month) %>%
             group_by(year) %>%
             summarise_all(prop_na) %>%
-            select(-year) > threshold
+            dplyr::select(-year) > threshold
     
     # list which contains the years which should be removed for each station.
     years_to_exclude <- list()
@@ -185,22 +198,27 @@ east_coast <- states %>%
 ggplot() + 
   geom_polygon(data = east_coast, aes(x = long, y = lat, group = group, fill = group), color = "white") +
   geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = .8) +
-  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'red') +
+  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'red', check_overlap = T) +
   guides(fill = F) +
   theme_nothing()
 ```
-
 *1. ADCIRC_POST_Detided*
 
-```{r examine time-series, cache = T}
-# plot timer-series for each station in FEMA region 3 simultaneously over specified time-interval
+```{r examine time-series, cache = T, message = F}
 ADC_POST_Detided_region3 %>%
-  filter('1979-01-01 0:00:00' <= TIME, TIME <= '1980-01-01 0:00:00') %>%
-  melt(id.vars = c('TIME', 'year', 'month')) %>%
-  ggplot(aes(x = TIME, y = value)) +
-  geom_line(alpha = 0.5, col = 'blue', size = 0.1) +
-  theme(axis.text.x = element_blank()) +
-  facet_wrap(~variable)
+  #filter('1979-01-01 0:00:00' <= TIME, TIME <= '1980-01-01 00:00:00') %>%
+  select(TIME, WrightsvilleBeach) %>%
+  ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
+  geom_line(col = 'blue', size = 0.1, alpha= 0.5) +
+  labs(x = 'year', y = 'sea-level (meters)', title = 'Wrightsville Beach')
+
+# plot timer-series for each station in FEMA region 3 simultaneously over specified time-interval
+# ADC_POST_Detided_region3 %>%
+  # filter('1979-01-01 0:00:00' <= TIME, TIME <= '1979-01-01 23:59:00') %>%
+  # melt(id.vars = c('TIME', 'year', 'month')) %>%
+  # ggplot(aes(x = TIME, y = value)) +
+  # geom_line(col = 'blue', size = 0.1) +
+  # facet_wrap(~variable)
 
 # plot side-by-side box plots and violin plots for each station
 ADC_POST_Detided_region3 %>%
@@ -210,27 +228,15 @@ ADC_POST_Detided_region3 %>%
   geom_boxplot(outlier.size = 0.1)
 
 ADC_POST_Detided_region3 %>%
-  select(-TIME, -year, -month) %>%
-  melt() %>%
-  ggplot(aes(x = value, y = variable)) +
-  geom_violin()
-
-ADC_POST_Detided_region3 %>%
   melt(id.vars = c('TIME', 'year', 'month')) %>%
   ggplot(aes(x = value)) +
-  geom_histogram(color = 'light blue') +
-  facet_wrap(~variable)
-
-ADC_POST_Detided_region3 %>%
-  melt(id.vars = c('TIME', 'year', 'month')) %>%
-  ggplot(aes(x = value)) +
-  geom_density(color = 'light blue') +
+  geom_density(color = 'blue') +
   facet_wrap(~variable)
 ```
 
 *2. Yearly maxima of ADCIRC POST Detided*
 
-```{r create yearly maxima time-series}
+```{r create yearly maxima time-series, message = F}
 # create data frame with yearly maxima for each station
  df_max <- ADC_POST_Detided_region3 %>% 
   select(-TIME, -month) %>%
@@ -241,6 +247,51 @@ ADC_POST_Detided_region3 %>%
 df_max <- df_max %>%
   mutate(year = as.numeric(year))
 
+# single station
+df_max %>%
+  select(year, WrightsvilleBeach) %>%
+  ggplot(aes(x = year, y = WrightsvilleBeach)) +
+  geom_point(col = 'blue')
+
+# correlation plot
+df_max %>%
+  select(2:8) %>%
+  ggpairs(
+    upper = list(continuous = wrap("density", alpha = 0.5), combo = "box"),
+    lower = list(continuous = wrap('points', size = 0.3))
+  )
+
+tibble(cor = sort(cor(df_max[, -1]))) %>%
+  filter(cor < 1) %>% # exclude diagnoal elements or correlation matrix
+  mutate(n = 1:n()) %>%
+  ggplot(aes(x = n, y = cor)) +
+  geom_point(size = 0.1)
+
+
+# visualize the block-maxima through time-seires, box plots, violin plots, histograms and density plots.
+df_max %>%
+  as.tibble() %>%
+  melt(id.vars = c('year')) %>%
+  ggplot(aes(x = year, y = value)) +
+  geom_line(col = 'blue') +
+  facet_wrap(~variable)
+
+df_max %>%
+  select(-year) %>%
+  melt() %>%
+  ggplot(aes(x = value, y = variable)) +
+  geom_boxplot(outlier.size = 0.01) 
+
+df_max %>%
+  as.tibble() %>%
+  melt(id.vars = c('year')) %>%
+  ggplot(aes(x = value)) +
+  geom_density(col = 'blue') +
+  facet_wrap(~variable)
+```
+
+
+```{r create yearly maxima time-series with NA values, message = F}
 # compute block maxima for given station using only those years which the proportion of NAs are < threshold
 max_timeseries <- function(timeseries, threshold) {
   
@@ -263,45 +314,11 @@ for(station in colnames(timeseries[, 4:ncol(timeseries)])) {
 
 ADC_POST_Detided_max <- max_timeseries(ADC_POST_Detided_region3, threshold = 0.1)
 NOAA_OBS_Detided_max <- max_timeseries(NOAA_OBS_Detided_region3, threshold = 0.1)
-
-# visualize the block-maxima through time-seires, box plots, violin plots, histograms and density plots.
-df_max %>%
-  as.tibble() %>%
-  melt(id.vars = c('year')) %>%
-  ggplot(aes(x = year, y = value)) +
-  geom_line(col = 'light blue') +
-  facet_wrap(~variable)
-
-df_max %>%
-  select(-year) %>%
-  melt() %>%
-  ggplot(aes(x = value, y = variable)) +
-  geom_boxplot(outlier.size = 0.01) 
-
-df_max %>%
-  select(-year) %>%
-  melt() %>%
-  ggplot(aes(x = value, y = variable)) +
-  geom_violin() 
-
-df_max %>%
-  as.tibble() %>%
-  melt(id.vars = c('year')) %>%
-  ggplot(aes(x = value)) +
-  geom_histogram(col = 'light blue') +
-  facet_wrap(~variable)
-
-df_max %>%
-  as.tibble() %>%
-  melt(id.vars = c('year')) %>%
-  ggplot(aes(x = value)) +
-  geom_density(col = 'light blue') +
-  facet_wrap(~variable)
 ```
 
 ### Statistical Modeling
 
-```{r return level plots}
+```{r return level plots, include = F, eval = F}
 # compute return levels associated with return period 1/p
 gev_results <- function(p, gev) {
 
@@ -339,6 +356,7 @@ rl <- vector()
 ci_upper <- vector()
 ci_lower <- vector()
 
+# construct (1 - alpha) confidence intervals
 for(i in 1:length(periods)) {
   
   rl[i] <- gev_results(periods[i], gev)[1]
@@ -347,34 +365,208 @@ for(i in 1:length(periods)) {
 
 }
 
-p <- data.frame(y_p = -1/log(1 - periods), rl = rl, ci_upper = ci_upper, ci_lower = ci_lower) %>%
-  ggplot() +
-  scale_x_log10() +
-  geom_line(aes(x = y_p, y = rl), color = 'light blue') +
-  geom_line(aes(x = y_p, y = ci_upper), color = 'green', linetype = 'dashed') +
-  geom_line(aes(x = y_p, y = ci_lower), color = 'green', linetype = 'dashed') +
-  labs(title = station_name, y = 'return level')
+# compute empirical estimates
+#z_i <- sort(gev$x)
+
+#G_hat_inv <- function(i) gev$results$par[1] - (gev$results$par[2]/gev$results$par[3])*(1 - (-log(i/(length(z_i) + 1)))^-gev$results$par[3])
+
+  p <- data.frame(y_p = -1/log(1 - periods), rl = rl, ci_upper = ci_upper, ci_lower = ci_lower) %>%
+    ggplot(aes(x = y_p, y = rl)) +
+    scale_x_log10() + # plot y_p on the log10 scale
+    geom_line(color = 'blue') +
+    geom_line(aes(x = y_p, y = ci_upper),
+              color = 'red', 
+              linetype = 'dotted') +
+    geom_line(aes(x = y_p, y = ci_lower), 
+              color = 'red',
+              linetype = 'dotted') +
+    # geom_point(data = data.frame(z_i = z_i, G_hat_inv = G_hat_inv(1:length(z_i))), 
+               #aes(x = z_i, y = G_hat_inv),
+               # col = 'black', size = 0.5) +
+    labs(title = station_name, 
+         x = 'log10(y_p)',
+         y = 'return level')
 
 return(p)
 
 }
 
-# specify return period sequence
 periods <- seq(1/1000, 1/2, length.out = 100)[100:1]
 
-# generate return level plot for each station
-
 for(i in 2:27) {
+p <- gev_rl_plot(periods, fevd(df_max[[i]], type = 'GEV'), 0.05, colnames(df_max)[i])
+print(p)
+}
+```
+
+```{r compute 20-year return levels}
+gev_results <- list() # list to store independent GEV fits for each station
+
+# fit and store the models in the prepared list
+for(i in 2:ncol(df_max)) {
+  gev_results[[i-1]] <- fevd(df_max[[i]], use.phi = T, type = 'GEV') # phi = T means log(sigma) used instead of sigma
+}
+
+names(gev_results) <- colnames(df_max)[-1] # add station names to results
+
+# compute and store the gev parameter MLEs
+par_results <- list()
+
+for(i in 1:length(gev_results)) {
   
-gev <- fevd(df_max[[i]], type = 'GEV')
+  par_results[[i]] <- gev_results[[i]]$results$par
+  
+}
 
-print(gev_rl_plot(periods, gev, 0.05, labels(df_max)[[2]][i]))
+names(par_results) <- colnames(df_max)[-1] 
+
+# compute and store the estimated co-variance matrices
+cov_results <- list()
+
+for(i in 1:length(gev_results)) {
+   
+  cov_results[[i]] <- solve(gev_results[[i]]$results$hessian)
+  
+}
+
+names(cov_results) <- colnames(df_max)[-1]
+
+# compute and store the 20-year return levels
+gev_return_lvls <- vector() 
+
+for(i in 1:length(gev_results)) {
+  
+  gev_return_lvls[i] <- return.level(gev_results[[i]], return.period = 20)[1]
+  
+}
+
+names(gev_return_lvls) <- colnames(df_max)[-1]
+
+par(mfrow = c(4, 7)) # specifies the plot grid dimensions
+
+# plot the return level plots for each station
+for(i in 1:length(gev_results)) {
+plot(gev_results[[i]], type = 'rl', main = colnames(df_max)[i+1], col = 'blue')
+}
+```
+
+
+```{r}
+# variogram of yearly maxima
+df_max %>% 
+  select(-year) %>% 
+  as.matrix() %>%
+  variogram(as.matrix(df_meta_region3[, c(3,4)]))
+```
+
+```{r compute distance matrix from lat-lon coordinates}
+# p-norm if needed
+p_norm <- function(x, p) sum(abs(x)^p)^(1/p)
+
+# computes estimate of shortest distance (in meters) between two points on an ellipsoid (i.e. geodesic)
+dist_matrix <- df_meta_region3 %>%
+  select(lon, lat) %>%
+  slice(26:1) %>%
+  distm()
+
+rownames(dist_matrix) <- colnames(df_max[, -1])
+colnames(dist_matrix) <- colnames(df_max[, -1])
+
+dim(dist_matrix)
+
+sum(1:26) - 26 == choose(26, 2) # number of distinct  location pairs
+```
+
+
+```{r specify gaussian process likelihood}
+# number of spatial locations
+L <- nrow(df_meta_region3)
+# dimension of spatial process
+d <- 3
+
+# compute data vector of MLEs for gev parameters
+theta_hat <- vector()
+
+for(j in 1:3) {
+  
+  for(i in 1:L) {
+
+  theta_hat <- c(theta_hat, par_results[[i]][j])
+
+  }
+  
+}
+
+# construct block diagonal variance matrix for the measurement error process
+W <- bdiag(cov_results)
+
+dim(W) # 3 parameters and 26 stations therefore 78 by 78 marix
+
+
+# for use in spatially correlated random effect covariance matrix creation
+make_basis <- function(k, p) replace(numeric(p), k, 1)
+
+# compute variance matrix for spatially correlated random effects
+#S <- function(A, rho, dist) {
+  
+  #result <- matrix(rep(0, L*d), nrow = L*d, ncol = L*d)
+  
+  #result[i , j] <- 
+#}
+
+# compute variance matrix for spatially correlated random effects via Russel et al formula
+
+S <- function(A, rho, dist) {
+  
+  storage <- list()
+  
+  for(i in 1:d) {
+    
+    N <- make_basis(i, 3) %*% t(make_basis(i, 3))
+    
+    O <- diag(L)
+    
+      for(j in 1:L) {
+        
+          for(k in 1:L) {
+            
+            O[j, k] <- exp(-dist[j, k]/rho[i])
+              
+          }
+    }
+      
+    storage[[i]] <- kronecker(N, O)
+    
+  }
+  
+  V <- Reduce('+', storage)
+  
+  result <- kronecker(diag(L), A) %*% V %*% t(kronecker(diag(L), A))
+  
+  return(result)
+  
+}
+
+# par = parameters, W = error covariance, dist = station by station distances
+gaussian_process_likelihood <- function(data, par, W, dist) {
+
+# co-regionalization matrix used to define S below (i.e. S := Sigma_rho_A) 
+A <- matrix(c(par[4], rep(0, 2),
+              par[5:6], rep(0, 1),
+              par[7:9]), byrow = T, nrow = 3, ncol = 3)
+
+S <- S(A, par[10:12], dist)
+
+# compute centered data term in likelihood
+Z <- data - c(rep(par[1], L), rep(par[2], L), rep(par[3], L))
+  
+# compute the likelihood
+result <- det(2*pi*S)^(-0.5) * exp(-0.5*t(Z)%*%solve(S)%*%Z)
+  
+return(result)
 
 }
 
-for(i in 2:27) {
-gev <- fevd(df_max[[i]], type = 'GEV')
-plot(gev, type = 'rl', main = labels(df_max)[[2]][i])
-}
+gaussian_process_likelihood(theta_hat, rep(1, 12), W, dist_matrix)
 ```
 
