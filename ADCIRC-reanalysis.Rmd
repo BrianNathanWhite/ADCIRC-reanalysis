@@ -24,20 +24,11 @@ library(mvtnorm)
 
 # extreme value analysis
 library(extRemes)
-library(SpatialExtremes)
-library(climextRemes)
-
-# Bayesian non-stationary gaussian processes
-library(BayesNSGP)
-
-# MCMC
-library(nimble)
 
 # working with spatial data
 library(maps)
 library(ggmap)
 library(geosphere)
-# library(sf)
 ```
 
 
@@ -60,7 +51,7 @@ NOAA_OBS_Detided_region3 <- read.csv('data/NOAA_OBS_Detided_region3.csv')
 
 
 ```{r clean data, warning = F, message = F}
-# Lewisetta was excluded from ADC_POST_Detided before import so remove from df_meta_region3 and   NOAA_OBS_Detided_region3 for consistency
+# Lewisetta was excluded from ADC_POST_Detided before import so remove from df_meta_region3 and NOAA_OBS_Detided_region3 for consistency
 
 # pull Lewisetta's station id
 raw_Lewisetta_station_id <- df_meta_region3 %>%
@@ -202,6 +193,7 @@ ggplot() +
   guides(fill = F) +
   theme_nothing()
 ```
+
 *1. ADCIRC_POST_Detided*
 
 ```{r examine time-series, cache = T, message = F}
@@ -212,21 +204,14 @@ ADC_POST_Detided_region3 %>%
   geom_line(col = 'blue', size = 0.1, alpha= 0.5) +
   labs(x = 'year', y = 'sea-level (meters)', title = 'Wrightsville Beach')
 
-# plot timer-series for each station in FEMA region 3 simultaneously over specified time-interval
-# ADC_POST_Detided_region3 %>%
-  # filter('1979-01-01 0:00:00' <= TIME, TIME <= '1979-01-01 23:59:00') %>%
-  # melt(id.vars = c('TIME', 'year', 'month')) %>%
-  # ggplot(aes(x = TIME, y = value)) +
-  # geom_line(col = 'blue', size = 0.1) +
-  # facet_wrap(~variable)
-
-# plot side-by-side box plots and violin plots for each station
+# box plots and violin plots for each station
 ADC_POST_Detided_region3 %>%
   select(-TIME, -year, -month) %>%
   melt() %>%
   ggplot(aes(x = value, y = variable)) +
   geom_boxplot(outlier.size = 0.1)
 
+# density plots for each station
 ADC_POST_Detided_region3 %>%
   melt(id.vars = c('TIME', 'year', 'month')) %>%
   ggplot(aes(x = value)) +
@@ -288,6 +273,12 @@ df_max %>%
   ggplot(aes(x = value)) +
   geom_density(col = 'blue') +
   facet_wrap(~variable)
+
+# variogram of yearly maxima
+df_max %>% 
+  select(-year) %>% 
+  as.matrix() %>%
+  variogram(as.matrix(df_meta_region3[, c(3,4)]))
 ```
 
 
@@ -318,88 +309,9 @@ NOAA_OBS_Detided_max <- max_timeseries(NOAA_OBS_Detided_region3, threshold = 0.1
 
 ### Statistical Modeling
 
-```{r return level plots, include = F, eval = F}
-# compute return levels associated with return period 1/p
-gev_results <- function(p, gev) {
+*First Stage of Inference: Find the MLEs of the GEV parameters*
 
-  gev_param <- gev$results$par
-  
-  y_p <- -log(1 - p)
-  
-  # compute return level associated with return period 1/p
-  if(gev_param[3] == 0) {
-    
-    rl <- as.numeric(gev_param[1] - gev_param[2]*log(y_p))
-    
-  } else {
-    rl <-as.numeric(gev_param[1] - (gev_param[2]/gev_param[3])*(1 - y_p^-gev_param[3]))
-  }
-  
-  # compute gradient of return level associated with return period 1/p
-  rl_grad <- c(1, (-gev_param[3]^-1)*(1 - y_p^-gev_param[3]), gev_param[2]*(gev_param[3]^-2)*(1 - y_p^-gev_param[3]) - gev_param[2]*(gev_param[3]^-1)*(y_p^-gev_param[3])*log(y_p))
-  
-  # compute variance matrix of return level associated with return period 1/p via delta method
-  gev_cov <- solve(gev$results$hessian)
-  rl_var <-  t(rl_grad) %*% gev_cov %*% rl_grad
-  
-  result <- c(rl, rl_var)
-  
-  
-  return(result)
-  
-}
-
-# generate return level plot over given return period sequence
-gev_rl_plot <- function(periods, gev, alpha, station_name) {
-  
-rl <- vector()
-ci_upper <- vector()
-ci_lower <- vector()
-
-# construct (1 - alpha) confidence intervals
-for(i in 1:length(periods)) {
-  
-  rl[i] <- gev_results(periods[i], gev)[1]
-  ci_upper[i] <- rl[i] + qnorm(1 - alpha/2)*sqrt(gev_results(periods[i], gev)[2])
-  ci_lower[i] <- rl[i] - qnorm(1 - alpha/2)*sqrt(gev_results(periods[i], gev)[2])
-
-}
-
-# compute empirical estimates
-#z_i <- sort(gev$x)
-
-#G_hat_inv <- function(i) gev$results$par[1] - (gev$results$par[2]/gev$results$par[3])*(1 - (-log(i/(length(z_i) + 1)))^-gev$results$par[3])
-
-  p <- data.frame(y_p = -1/log(1 - periods), rl = rl, ci_upper = ci_upper, ci_lower = ci_lower) %>%
-    ggplot(aes(x = y_p, y = rl)) +
-    scale_x_log10() + # plot y_p on the log10 scale
-    geom_line(color = 'blue') +
-    geom_line(aes(x = y_p, y = ci_upper),
-              color = 'red', 
-              linetype = 'dotted') +
-    geom_line(aes(x = y_p, y = ci_lower), 
-              color = 'red',
-              linetype = 'dotted') +
-    # geom_point(data = data.frame(z_i = z_i, G_hat_inv = G_hat_inv(1:length(z_i))), 
-               #aes(x = z_i, y = G_hat_inv),
-               # col = 'black', size = 0.5) +
-    labs(title = station_name, 
-         x = 'log10(y_p)',
-         y = 'return level')
-
-return(p)
-
-}
-
-periods <- seq(1/1000, 1/2, length.out = 100)[100:1]
-
-for(i in 2:27) {
-p <- gev_rl_plot(periods, fevd(df_max[[i]], type = 'GEV'), 0.05, colnames(df_max)[i])
-print(p)
-}
-```
-
-```{r compute 20-year return levels}
+```{r}
 gev_results <- list() # list to store independent GEV fits for each station
 
 # fit and store the models in the prepared list
@@ -450,18 +362,31 @@ plot(gev_results[[i]], type = 'rl', main = colnames(df_max)[i+1], col = 'blue')
 }
 ```
 
+*Second Stage of Inference: d-variate Guassian process model*
 
-```{r}
-# variogram of yearly maxima
-df_max %>% 
-  select(-year) %>% 
-  as.matrix() %>%
-  variogram(as.matrix(df_meta_region3[, c(3,4)]))
-```
+Specify the likelihood of the Gaussian process
 
-```{r compute distance matrix from lat-lon coordinates}
-# p-norm if needed
-p_norm <- function(x, p) sum(abs(x)^p)^(1/p)
+```{r specify gaussian process likelihood}
+# number of spatial locations
+L <- nrow(df_meta_region3)
+# dimension of spatial process
+d <- 3
+
+# compute data vector of MLEs for gev parameters
+theta_hat <- vector()
+
+for(j in 1:d) {
+  
+  for(i in 1:L) {
+
+  theta_hat <- c(theta_hat, par_results[[i]][j])
+
+  }
+  
+}
+
+# construct block diagonal variance matrix for the measurement error process
+W <- bdiag(cov_results) # 3 parameters and 26 stations therefore 78 by 78 marix
 
 # computes estimate of shortest distance (in meters) between two points on an ellipsoid (i.e. geodesic)
 dist_matrix <- df_meta_region3 %>%
@@ -474,49 +399,21 @@ colnames(dist_matrix) <- colnames(df_max[, -1])
 
 dim(dist_matrix)
 
+# convert lat-lon to point in R^3
+R <- 6371 # approximate radius of the earth in km
+
+# compute x, y, z coordinates for each lat-lon pair
+df_meta_region3 %>%
+  mutate(x = R*cos(lat)*cos(lon), y = R*cos(lat)*sin(lon), z = R*sin(lat))
+
+
 sum(1:26) - 26 == choose(26, 2) # number of distinct  location pairs
-```
-
-
-```{r specify gaussian process likelihood}
-# number of spatial locations
-L <- nrow(df_meta_region3)
-# dimension of spatial process
-d <- 3
-
-# compute data vector of MLEs for gev parameters
-theta_hat <- vector()
-
-for(j in 1:3) {
-  
-  for(i in 1:L) {
-
-  theta_hat <- c(theta_hat, par_results[[i]][j])
-
-  }
-  
-}
-
-# construct block diagonal variance matrix for the measurement error process
-W <- bdiag(cov_results)
-
-dim(W) # 3 parameters and 26 stations therefore 78 by 78 marix
-
-
-# for use in spatially correlated random effect covariance matrix creation
-make_basis <- function(k, p) replace(numeric(p), k, 1)
-
-# compute variance matrix for spatially correlated random effects
-#S <- function(A, rho, dist) {
-  
-  #result <- matrix(rep(0, L*d), nrow = L*d, ncol = L*d)
-  
-  #result[i , j] <- 
-#}
 
 # compute variance matrix for spatially correlated random effects via Russel et al formula
-
 S <- function(A, rho, dist) {
+  
+  # makes a p dimensional basis vector for coordinate
+  make_basis <- function(k, p) replace(numeric(p), k, 1)
   
   storage <- list()
   
@@ -548,7 +445,7 @@ S <- function(A, rho, dist) {
 }
 
 # par = parameters, W = error covariance, dist = station by station distances
-gaussian_process_likelihood <- function(data, par, W, dist) {
+gaussian_process_likelihood <- function(par, data,  W, dist) {
 
 # co-regionalization matrix used to define S below (i.e. S := Sigma_rho_A) 
 A <- matrix(c(par[4], rep(0, 2),
@@ -558,15 +455,64 @@ A <- matrix(c(par[4], rep(0, 2),
 S <- S(A, par[10:12], dist)
 
 # compute centered data term in likelihood
-Z <- data - c(rep(par[1], L), rep(par[2], L), rep(par[3], L))
+mu <- c(rep(par[1], L), rep(par[2], L), rep(par[3], L))
+Z <- data - mu
   
-# compute the likelihood
-result <- det(2*pi*S)^(-0.5) * exp(-0.5*t(Z)%*%solve(S)%*%Z)
+# compute the log-likelihood
+result <- -0.5*log(det(2*pi*(S + W))) - 0.5*t(Z)%*%solve(S + W)%*%Z
   
-return(result)
+return(as.numeric(result))
 
 }
 
-gaussian_process_likelihood(theta_hat, rep(1, 12), W, dist_matrix)
+# par = parameters, W = error covariance, dist = station by station distances
+gaussian_process_likelihood_bulit_in <- function(par, data,  W, dist) {
+
+# co-regionalization matrix used to define S below (i.e. S := Sigma_rho_A) 
+A <- matrix(c(par[4], rep(0, 2),
+              par[5:6], rep(0, 1),
+              par[7:9]), byrow = T, nrow = 3, ncol = 3)
+
+S <- S(A, par[10:12], dist)
+
+# compute centered data term in likelihood
+mu <- c(rep(par[1], L), rep(par[2], L), rep(par[3], L))
+  
+# compute the log-likelihood
+result <- dmvnorm(data, mean = mu, sigma = S + W, log = T)
+  
+return(as.numeric(result))
+
+}
+
+# MVN density specified correctly
+set.seed(10)
+gaussian_process_likelihood(c(runif(9, 0.1, 100), 900, 800, 2000), data = theta_hat, W = W, dist_matrix/1000)
+set.seed(7)
+gaussian_process_likelihood_bulit_in(c(runif(9, 0.1, 100), 900, 800, 2000), data = theta_hat, W = as.matrix(W), dist_matrix/1000)
+```
+
+Find the MLEs of the parameter vector numerically.
+
+```{r optimize likelihood}
+# find MLEs
+start_time <- Sys.time()
+
+test1 <- optim(c(runif(p - d, 0.1, 100), runif(d, 500, max(dist_matrix))), gaussian_process_likelihood, data = theta_hat, W = W, dist = dist_matrix/1000, method = 'BFGS', hessian = T, control=list(maxit = 10000, fnscale = -1))
+
+end_time <- Sys.time()
+run_time <- end_time-start_time
+
+run_time
+
+test2 <- optim(c(runif(9, 0.1, 100), 600, 4000, 1000), gaussian_process_likelihood, data = theta_hat, W = W, dist = dist_matrix/1000, method = 'BFGS', hessian = T, control=list(maxit = 10000, fnscale = -1))
+
+
+test1$par
+test2$par
+
+test1$par
+gaussian_process_fit$par
+test2
 ```
 
