@@ -1,7 +1,7 @@
 ---
-title: "Latent Process Model"
+title: "two-stage-inference-alternate"
 author: "Brian N. White"
-date: "4/18/2022"
+date: "2022-05-11"
 output: html_document
 ---
 
@@ -18,6 +18,7 @@ library(extRemes) # compute MLE of GEV model
 library(geosphere) # used to compute geodesic distance between lat-lon pairs
 library(gstat) # for (universal) kriging
 library(sp) # for manipulating spatial data
+library(plotly) # for 3D scatterplots
 ```
 
 ```{r import data}
@@ -111,16 +112,12 @@ tibble(x = 1:20, y = p_function(x)) %>%
 # compute data vector of MLEs for gev parameters
 theta_hat <- vector()
 
-# for when ordering data vector according to Russell, Risser, Smith: order one parameter after the other
- for(i in 1:d) { # each spatial process
-  
-   for(j in 1:L) { # each location
+# order one location after the other
+  for(i in 1:L) { # each location
 
-  theta_hat <- c(theta_hat, par_results[[j]][i])
+  theta_hat <- c(theta_hat, par_results[[i]])
 
   }
-  
-}
   
 theta_hat
 ```
@@ -129,7 +126,7 @@ theta_hat
 dist_matrix <- df_meta_region3 %>%
   select(lon, lat) %>%
   slice(26:1) %>% # re-arrange stations to match order of parameters fit by fevd
-  distm(fun = distHaversine)/1000 # great-circle-distance via haversine method, assumes spherical earth
+  distm(fun = distHaversine)/10000 # great-circle-distance via haversine method, assumes spherical earth
 
 rownames(dist_matrix) <- colnames(df_max[, -1])
 colnames(dist_matrix) <- colnames(df_max[, -1])
@@ -142,34 +139,35 @@ W <- bdiag(cov_results) %>% as.matrix()
 ```{r compute variance matrix for spatially correlated random effects: S}
 S <- function(A, rho, dist) {
   
-  # makes a p dimensional basis vector for component k
-   make_basis <- function(k, p) replace(numeric(p), k, 1)
+  V <- list()
   
-   storage <- list()
-  
-   for(i in 1:d) { # for each spatial process
+  for(i in 1:L) {
     
-     N <- make_basis(i, d) %*% t(make_basis(i, d))
+    storage <- list()
     
-     O <- diag(L)
-    
-       for each location pair
-       for(j in 1:L) {
-        
-           for(k in 1:L) {
-            
-             O[j, k] <- exp(-dist[j, k]/rho[i])
-              
-          }
-    }
+    for(j in 1:L) {
       
-    storage[[i]] <- kronecker(N, O)
+      S <- diag(d)
+      
+      for(k in 1:d) {
+        
+        S[k, k] <- exp(-dist_matrix[i, j]/rho[k])
+        
+      }
+      
+     C <- A %*% S %*% t(A)
+     
+     storage[[j]] <- C
+      
+    }
+    
+    row_cov <- Reduce(cbind, storage)
+    
+    V[[i]] <- row_cov
     
   }
   
-  V <- Reduce('+', storage)
-  
-  result <- kronecker(diag(L), A) %*% V %*% t(kronecker(diag(L), A))
+  result <- Reduce(rbind, V)
   
   return(result)
   
@@ -181,32 +179,28 @@ S <- function(A, rho, dist) {
 # par = parameters, W = error covariance, dist = station by station distances
 gaussian_process_likelihood <- function(par, data,  W, dist) {
 
-  # co-regionalization matrix used to define S below 
-  A <- matrix(0, nrow = d, ncol = d)
-  A[upper.tri(A, diag = TRUE)] <- par[(d + 1):(p - d)]
-  A <- t(A)
+# co-regionalization matrix used to define S below 
+A <- matrix(0, nrow = d, ncol = d)
+A[upper.tri(A, diag = TRUE)] <- par[(d + 1):(p - d)]
+A <- t(A)
 
-  # variance matrix for spatially correlated random effects
-  S <- S(A, par[(p - d + 1):p], dist)
+# variance matrix for spatially correlated random effects
+S <- S(A, par[(p - d + 1):p], dist)
 
-  # mean vector  of the MVN density
-  mu <- vector()
+# mean vector  of the MVN density
+mu <- rep(par[1:d], L)
+
+# variance matrix of the MVN density
+V <- S + W 
   
-  for(i in 1:d) { # for each spatial process
-  mu <- c(mu, rep(par[i], L))
-  }
+# MVVN negative log-likelihood
+log_lik <- -(L*d/2)*log(2*pi) - (1/2)*log(det(V)) - (1/2)*t(data - mu) %*% solve(V) %*% (data - mu)
+result <- -log_lik
 
-  # variance matrix of the MVN density
-  V <- S + W 
+# alternatively, use MVN density from mvtnorm package
+# result <- -dmvnorm(data, mean = mu, sigma = S + W, log = T)
   
-  # MVVN negative log-likelihood
-  log_lik <- -0.5*log(det(2*pi*V)) - 0.5*t(data - mu)%*%solve(V)%*%(data - mu)
-  result <- -log_lik
-
-  # alternatively, use MVN density from mvtnorm package
-  result <- -dmvnorm(data, mean = mu, sigma = S + W, log = T)
-  
-return(as.numeric(result))
+return(result)
 
 }
 ```
@@ -222,6 +216,8 @@ gaussian_process_fit <-  optim(c(runif(p - d, 0.1, 100), runif(d, 50, max(dist_m
                                method = 'BFGS', 
                                hessian = T, 
                                control=list(maxit = 10000))
+
+# c(runif(p - d, 0.1, 100), runif(d, 50, max(dist_matrix)))
 
 end_time <- Sys.time()
 run_time <- end_time-start_time
@@ -240,15 +236,14 @@ A <- t(A)
 rho <- gaussian_process_fit$par[(p - d + 1):p]
 
 # extract covariance matrix
-# cov <- solve(gaussian_process_fit$hessian)
-
-diag(gaussian_process_fit$hessian) >= 0
+min_eigen_cov <- ifelse(min(eigen(solve(gaussian_process_fit$hessian))$values) > 0, 'Yes', 'No')
 
 # organize results
-gaussian_results <- list(beta, A, rho)
+gaussian_results <- list(beta, A, rho, min_eigen_cov)
 names(gaussian_results) <- c('beta: mean parameter values over R^2', 
                              'A: co-regionalization matrix', 
-                             'rho: range parameters')
+                             'rho: range parameters',
+                             'Is approximate co-variance matrix of MLE positive semi-definite?')
 
 gaussian_results
 ```
@@ -256,45 +251,34 @@ gaussian_results
 ```{r implement kriging}
 # theta_hat is output from 1st stage of inference, par is output from second stage, W is error process covariance
 kriging_pred <- function(new_loc, theta_hat, rho, A, W) {
-  
-  x0 <- matrix(rep(1, d), nrow = d, ncol = 1) # new location design vector
 
   V <- S(A, rho, dist_matrix)
   sigma_inv <- solve(V + W) # plug-in MLE estimate of covariance matrix for theta hat
 
-  beta_hat_full <- vector()
+  beta_hat <- gaussian_results$`beta: mean parameter values over R^2`
   
-  for(i in 1:d) {
-    
-    beta_hat_full <- c(beta_hat, rep(beta_hat[i], L))
-    
-  }
-
+  tau <- matrix(rep(0, d*L), nrow = d, ncol = d*L) # compute covariance of new location and theta hat
   
-  gaussian_results$`beta: mean parameter values over R^2`
+  storage <- list()
   
-  # tau <- matrix(rep(0, d*L), nrow = d, ncol = d*L) # compute covariance of new location and theta hat
-  
-  # storage <- list()
-  
-   # for(i in 1:L) { # for each location
+   for(i in 1:L) { # for each location
      
-     # C <- diag(d) # covariance matrix for new obs and location i
+     C <- diag(d) # covariance matrix for new obs and location i
      
-    # for(j in 1:d) { # for each spatial process
+     for(j in 1:d) { # for each spatial process
        
-      # C[j, j] <- exp(-distHaversine(new_loc, df_meta_region3[27 - i, 4:3])*(10^-3)/rho[j])
+       C[j, j] <- exp(-distHaversine(new_loc, df_meta_region3[27 - i, 4:3])*(10^-3)/rho[j])
        
-     #}
+     }
      
-     #storage[[i]] <-  A %*% C %*% t(A)
+     storage[[i]] <-  A %*% C %*% t(A)
      
-   #}
+   }
   
-  # tau <- Reduce(cbind, storage) # covariance matrix of new location with existence locations
+  tau <- Reduce(cbind, storage) # covariance matrix of new location with existence locations
   
-  pred <- beta_hat + tau %*% sigma_inv %*% (theta_hat - beta_hat_full)
-
+  pred <- beta_hat + tau %*% sigma_inv %*% (theta_hat - rep(beta_hat, L))
+  
   cov <- A %*% t(A) - tau %*% sigma_inv %*% t(tau)
     
   rownames(pred) <- c('location', 'log.scale', 'shape')
@@ -307,7 +291,7 @@ kriging_pred <- function(new_loc, theta_hat, rho, A, W) {
 }
 ```
 
-```{r compute kriging predictions and covariances}
+```{r compute kriging predictions and covariances for known stations}
 check <- list()
 
 for(i in 1:L) {
@@ -320,7 +304,6 @@ check[[i]] <- kriging_pred(df_meta_region3[27 - i, 4:3],
 
 }
   
-
 names(check) <- colnames(df_max[,-1])
 
 for(i in 1:L) {
@@ -328,6 +311,16 @@ for(i in 1:L) {
   print(check[i])
   print(par_results[i])
   
+}
+
+
+coastline <- tibble(lon = seq(-79, -72, length.out = length(seq(30, 41, by = 0.1))), 
+                    lat = seq(30, 41, by = 0.1))
+    
+coastline_storage <- list()
+
+for(i in 1:nrow(coastline)) {
+  coastline_storage[[i]] <- kriging_pred(coastline[i, ], theta_hat, gaussian_results$`rho: range parameters`, gaussian_results$`A: co-regionalization matrix`, W)
 }
 ```
 
@@ -338,7 +331,7 @@ return_levels <- function(par, cov, p) {
   
   y_p <- -log(1 - p) # 1/p return level, where p is the upper tail probability: see Coles (2001) page 56,
   
-  if ( abs(par[3]) > 0.001 ) { # if the shape parameter is not about zero
+  if (abs(par[3]) > 0.001 ) { # if the shape parameter is not about zero
     
   z_p <- par[1] - (scale/par[3])*(1 - y_p^(-par[3]))
   
@@ -357,8 +350,8 @@ return_levels <- function(par, cov, p) {
   
     z_p_var <- t(z_p_grad) %*% cov %*% z_p_grad
 
- result <- list(z_p, z_p_var)
- names(result) <- c('1/p return level', 'variance')
+ result <- list(z_p, sqrt(z_p_var))
+ names(result) <- c('1/p return level', 'sd')
  
  return(result)
   
@@ -366,20 +359,51 @@ return_levels <- function(par, cov, p) {
 ```
 
 ```{r compute return levels and variances}
-rl_check <- list()
+v1 <- vector() # storage for 1/p return levels
+v2 <- vector() # storage for corresponding sd
 
-for(i in 1:L) {
+for(i in 1:nrow(coastline)) {
+v1[i] <- return_levels(coastline_storage[[i]][[1]], coastline_storage[[i]][[2]], 1/20)$'1/p return level'
+v2[i] <- return_levels(coastline_storage[[i]][[1]], coastline_storage[[i]][[2]], 1/20)$'sd'
+}
+
+return_level_results <- tibble(return_levels = v1, sd = v2, lower95 = v1 - qnorm(.975)*v2, upper95 = v1 + qnorm(.975)*v1, lon = coastline$lon, lat = coastline$lat)
+```
+
+```{r produce return level plots, warning = F}
+states <- map_data("state")
+
+east_coast <- states %>%
+  filter(region %in% c('florida', 'georgia', 'south carolina', 'north carolina', 'virginia', 'district of columbia', 'pennsylvania', 'maryland', 'delaware', 'new jersey', 'connecticut', 'new york', 'rhode island', 'massachusetts', 'vermont', 'new hampshire', 'maine' ))
+
+ggplot() + 
+  geom_polygon(data = east_coast, aes(x = long, y = lat, group = group), color = "white") +
+  geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = 0.01) +
+  geom_point(data = return_level_results, aes(x = lon, y = lat, color = return_levels)) + 
+  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'red', check_overlap = T) +
+  labs(title = '1/p return levels along U.S. East Coast')
+  guides(fill = F)
   
-  rl_check[[i]] <- return_levels(check[[i]][[1]], check[[i]][[2]], 1/100)
-    
-}
-
-names(rl_check) <- colnames(df_max[, -1])
-
-
-for(i in 1:L) {
-print(rl_check[[])
-}
-
-plot()
+plot_ly(return_level_results, 
+        x = ~lon, 
+        y = ~lat, 
+        z = ~return_levels, 
+        mode = 'markers', 
+        type = 'scatter3d', 
+        marker = list(size = 1, symbol = 104)) %>%
+  add_trace(data = return_level_results, 
+            x = ~lon, 
+            y = ~lat, 
+            z = ~upper95,
+            mode = "markers", 
+            type = "scatter3d", 
+            marker = list(size = 1, color = "red", symbol = 104)) %>%
+    add_trace(data = return_level_results, 
+            x = ~lon, 
+            y = ~lat, 
+            z = ~lower95,
+            mode = "markers", 
+            type = "scatter3d", 
+            marker = list(size = 1, color = "red", symbol = 104))
+  
 ```

@@ -252,7 +252,6 @@ alpha_hat_shape <- alpha_hat(theta_hat_shape, gaussian_process_fit_shape$par, W_
 ```{r implement kriging}
 kriging_pred <- function(new_loc, theta_hat, par, alpha_hat, W) {
   
-  X <- rep(1, 26)
   x0 <- 1
   
   V <- alpha_hat*V(dist_matrix, par[2])
@@ -261,12 +260,19 @@ kriging_pred <- function(new_loc, theta_hat, par, alpha_hat, W) {
   tau <- rep(0, 26)
     
     for(i in 1:26) {
-      tau[i] <- exp(-distHaversine(new_loc, df_meta_region3[27 - i, 4:3])*(10^-3)/par[2]) # index scheme is so        that stations are in the correct order (i.e. match theta_hat station order)
+      tau[i] <- alpha_hat*exp(-distHaversine(new_loc, df_meta_region3[27 - i, 4:3])*(10^-3)/par[2]) # index scheme is so        that stations are in the correct order (i.e. match theta_hat station order)
     }
   
-  beta_hat <- solve(t(X) %*% sigma_inv %*% X) %*% t(X) %*% sigma_inv %*% theta_hat
+  beta_hat <- par[1]
   
-  result <- x0*beta_hat + t(tau) %*% sigma_inv %*% (theta_hat - X %*% beta_hat)
+  pred <- beta_hat + t(tau) %*% sigma_inv %*% (theta_hat - rep(beta_hat, 26))
+  var <- alpha_hat^2 - t(tau) %*% sigma_inv %*% tau
+  
+  sd <- sqrt(var)
+  
+  result <- c(pred, sd)
+  
+  names(result) <- c('prediction', 'sd')
     
   return(result)
   
@@ -291,9 +297,9 @@ names(check_loc) <- colnames(df_max[, -1])
 
 for(i in 1:26) {
   
-print(check_loc[[i]])
+print(check_loc[i])
 
-print(par_results[[i]])
+# print(par_results[[i]])
 
 }
 
@@ -315,9 +321,9 @@ names(check_scale) <- colnames(df_max[, -1])
 
 for(i in 1:26) {
   
-print(check_scale[[i]])
+print(check_scale[i])
 
-print(par_results[[i]])
+# print(par_results[[i]])
 
 }
 
@@ -338,9 +344,9 @@ names(check_shape) <- colnames(df_max[, -1])
 
 for(i in 1:26) {
   
-print(check_shape[[i]])
+print(check_shape[i])
 
-print(par_results[[i]])
+# print(par_results[[i]])
 
 }
 

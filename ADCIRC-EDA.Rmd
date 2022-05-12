@@ -1,0 +1,147 @@
+---
+title: "ADCIRC-EDA"
+author: "Brian N. White"
+date: "2022-05-11"
+output: html_document
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F, tidy=TRUE)
+```
+
+```{r, include = F}
+# data wrangling & visualization
+library(tidyverse)
+library(reshape2)
+library(GGally)
+# extreme value analysis
+library(extRemes)
+# working with spatial data
+library(maps)
+library(ggmap)
+library(geosphere)
+```
+
+```{r import and clean data, warning = F, message = F}
+# load data
+df_meta_region3 <- read.csv('data/df_meta_region3.csv')
+ADC_POST_Detided_region3 <- read.csv('data/ADC_POST_Detided_region3.csv')
+NOAA_OBS_Detided_region3 <- read.csv('data/NOAA_OBS_Detided_region3.csv')
+```
+
+```{r clean data}
+source('./functions/clean_timeseries.R') # converts time to POSIX class, adds variables month & year, replace station ID with station name
+source('./functions/clean_metadata.R') # remove white space from station names
+
+df_meta_region3 <- clean_metadata(df_meta_region3) # remove white space from station names
+
+
+ADC_POST_Detided_region3 <- clean_timeseries(timeseries = ADC_POST_Detided_region3, 
+                                             metadata = df_meta_region3 
+                                                            %>% filter(stationname != 'Lewisetta')
+                                             )
+
+NOAA_OBS_Detided_region3 <- clean_timeseries(timeseries = NOAA_OBS_Detided_region3, metadata = df_meta_region3) %>%
+                              select(-Lewisetta) %>% # exclude Lewisetta for consistency with ADCIRC data
+                              select(c(1:3, 29:4)) # re-arrange stations to match order of columns in ADC_POST_Detided_region3
+
+df_meta_region3 <- df_meta_region3 %>% 
+                          filter(stationname != 'Lewisetta') # remove Lewisetta from meta data
+```
+
+*Interactive Map of Stations*
+
+[kepler.gl](https://kepler.gl/demo/map?mapUrl=https://dl.dropboxusercontent.com/s/jdmoouleyema7z1/keplergl_s3tjnff.json)
+
+```{r produce map of stations, warning = F}
+states <- map_data("state")
+
+east_coast <- states %>%
+  filter(region %in% c('florida', 'georgia', 'south carolina', 'north carolina', 'virginia', 'district of columbia', 'pennsylvania', 'maryland', 'delaware', 'new jersey', 'connecticut', 'new york', 'rhode island', 'massachusetts', 'vermont', 'new hampshire', 'maine' ))
+
+ggplot() + 
+  geom_polygon(data = east_coast, aes(x = long, y = lat, group = group, fill = group), color = "white") +
+  geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = .8) +
+  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'red', check_overlap = T) +
+  guides(fill = F) +
+  theme_nothing()
+```
+
+```{r examine time-series, cache = T, message = F}
+ADC_POST_Detided_region3 %>%
+  #filter('1979-01-01 0:00:00' <= TIME, TIME <= '1980-01-01 00:00:00') %>%
+  select(TIME, WrightsvilleBeach) %>%
+  ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
+  geom_line(col = 'blue', size = 0.1, alpha= 0.5) +
+  labs(x = 'year', y = 'sea-level (m)', title = 'ADCIRC Sea-Level Reconstruction for Wrightsville Beach')
+
+# box plots and violin plots for each station
+ADC_POST_Detided_region3 %>%
+  select(-TIME, -year, -month) %>%
+  melt() %>%
+  ggplot(aes(x = value, y = variable)) +
+  geom_boxplot(outlier.size = 0.1)
+
+# density plots for each station
+ADC_POST_Detided_region3 %>%
+  melt(id.vars = c('TIME', 'year', 'month')) %>%
+  ggplot(aes(x = value)) +
+  geom_density(color = 'blue') +
+  facet_wrap(~variable)
+```
+
+```{r create yearly maxima time-series, message = F}
+# create data frame with yearly maxima for each station
+ df_max <- ADC_POST_Detided_region3 %>% 
+  select(-TIME, -month) %>%
+  group_by(year) %>%
+  summarise_all(max, na.rm = T)
+
+# change year from class character to numeric
+df_max <- df_max %>%
+  mutate(year = as.numeric(year))
+
+# single station
+df_max %>%
+  select(year, WrightsvilleBeach) %>%
+  ggplot(aes(x = year, y = WrightsvilleBeach)) +
+  geom_point(col = 'blue') +
+  labs(x = 'year', y = 'sea-level (m)', title = 'Yearly Sea-Level Maxima for Wrightsville Beach')
+
+# correlation plot
+df_max %>%
+  select(2:8) %>%
+  ggpairs(
+    upper = list(continuous = wrap("density", alpha = 0.5), combo = "box"),
+    lower = list(continuous = wrap('points', size = 0.3))
+  )
+
+tibble(cor = sort(cor(df_max[, -1]))) %>%
+  filter(cor < 1) %>% # exclude diagnoal elements or correlation matrix
+  mutate(n = 1:n()) %>%
+  ggplot(aes(x = n, y = cor)) +
+  geom_point(size = 0.1)
+
+
+# visualize the block-maxima through time-seires, box plots, violin plots, histograms and density plots.
+df_max %>%
+  as.tibble() %>%
+  melt(id.vars = c('year')) %>%
+  ggplot(aes(x = year, y = value)) +
+  geom_line(col = 'blue') +
+  facet_wrap(~variable)
+
+df_max %>%
+  select(-year) %>%
+  melt() %>%
+  ggplot(aes(x = value, y = variable)) +
+  geom_boxplot(outlier.size = 0.01) +
+  labs(y = 'NOAA station', x = 'sea-level (m)', title = 'Boxplots of Yearly Maxima for Each NOAA Station')
+
+df_max %>%
+  as.tibble() %>%
+  melt(id.vars = c('year')) %>%
+  ggplot(aes(x = value)) +
+  geom_density(col = 'blue') +
+  facet_wrap(~variable)
+```
