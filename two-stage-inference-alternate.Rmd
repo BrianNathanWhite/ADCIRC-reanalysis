@@ -11,14 +11,19 @@ knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F, tidy = TRU
 
 ```{r load packages}
 library(tidyverse) # data manipulation meta-package
+library(reshape2) # for combining multiple variables into single column
 library(Matrix) # for use in computing Kronecker product
+library(matrixcalc) # for use in computing Hadamaard product
 library(blockmatrix) # compute block matrices
 library(mvtnorm) # compute MVN density
 library(extRemes) # compute MLE of GEV model
 library(geosphere) # used to compute geodesic distance between lat-lon pairs
 library(gstat) # for (universal) kriging
 library(sp) # for manipulating spatial data
-library(plotly) # for 3D scatterplots
+library(plotly) # for 3D plotting
+library(maps) # contains US maps
+library(ggmap) # for manipulating map objects via ggplot
+library(svMisc) # alllows you to track for loop progress
 ```
 
 ```{r import data}
@@ -38,60 +43,123 @@ df_meta_region3 <- clean_metadata(df_meta_region3) # remove white space from sta
 ADC_POST_Detided_region3 <- clean_timeseries(timeseries = ADC_POST_Detided_region3, 
                                              metadata = df_meta_region3 
                                                             %>% filter(stationname != 'Lewisetta')
-                                             )
+                                             ) %>%
+                                select(1:13, 15:14, 16:30)
 
 NOAA_OBS_Detided_region3 <- clean_timeseries(timeseries = NOAA_OBS_Detided_region3, metadata = df_meta_region3) %>%
                               select(-Lewisetta) %>% # exclude Lewisetta for consistency with ADCIRC data
-                              select(c(1:3, 29:4)) # re-arrange stations to match order of columns in ADC_POST_Detided_region3
+                              select(c(1:3, 30:4)) # re-arrange stations to match order of columns in ADC_POST_Detided_region3
 
 df_meta_region3 <- df_meta_region3 %>% 
                           filter(stationname != 'Lewisetta') # remove Lewisetta from meta data
 ```
 
-```{r compute yearly maxima for each station}
-# create data frame with yearly maxima for each station
- df_max <- ADC_POST_Detided_region3 %>% 
-  select(-TIME, -month) %>%
+```{r compute yearly maxima for each station, warning = F}
+# create data frame with yearly maxima over hourly observations for each station
+# df_max_ADCIRC <- ADC_POST_Detided_region3 %>%
+           #  select(-TIME, -month, -day) %>%
+           # group_by(year) %>%
+          # summarise_all(max, na.rm = T) %>%
+          # mutate(year = as.numeric(year))
+
+# create data frame with yearly maxima over hourly observations for each station
+#df_max_NOAA <- NOAA_OBS_Detided_region3 %>%
+                # select(-TIME, -month, -day) %>%
+                # group_by(year) %>%
+                # summarise_all(max, na.rm = T) %>%
+                # mutate(year = as.numeric(year)) %>%
+                # replace_with_na_all(~.x == -Inf)
+                
+
+# compute data frame with daily mean for each station
+df_mean_ADCIRC <- ADC_POST_Detided_region3 %>%
+  group_by(year, month, day) %>%
+  summarise_all(mean, na.rm = T)
+
+df_mean_NOAA <- NOAA_OBS_Detided_region3 %>%
+  group_by(year, month, day) %>%
+  summarise_all(mean, na.rm = T)
+
+# create data frame with yearly maxima over daily means for each station
+df_max_ADCIRC <- df_mean_ADCIRC[, -(2:4)] %>%
   group_by(year) %>%
   summarise_all(max, na.rm = T) %>%
   mutate(year = as.numeric(year))
+ 
+df_max_NOAA <- df_mean_NOAA[, -(2:4)] %>%
+                  group_by(year) %>%
+                  summarise_all(max, na.rm = T) %>%
+                  mutate(year = as.numeric(year)) %>%
+                  replace_with_na_all(~.x == -Inf)
 ```
 
 ```{r 1st stage of inference: station-by-station non-stationary GEV fit}
-gev_results <- list() # list to store independent GEV fits for each station
-
-# fit and store the models in the prepared list
-for(i in 2:ncol(df_max)) {
-  gev_results[[i-1]] <- fevd(df_max[[i]], use.phi = T, type = 'GEV') # phi = T means log(sigma) used instead of sigma
-}
-
-names(gev_results) <- colnames(df_max)[-1] # add station names to results
-
-# compute and store the GEV parameter MLEs
-par_results <- list()
-
-for(i in 1:length(gev_results)) {
+gev_results <- function(df_max) {
   
-  par_results[[i]] <- gev_results[[i]]$results$par
+  gev_results <- list() # list to store independent GEV fits for each station
+
+  # fit and store the models in the prepared list
+  for(i in 2:ncol(df_max)) {
+    gev_results[[i-1]] <- fevd(na.omit(df_max[[i]]), use.phi = T, type = 'GEV') # phi = T means log(sigma) used instead of sigma
+  }
+
+  names(gev_results) <- colnames(df_max)[-1] # add station names to results
+  
+  return(gev_results)
   
 }
 
-names(par_results) <- colnames(df_max)[-1] # add station names to results
+# which stations have yearly maxima missing years?
+bad_stations <- which(apply(df_max_NOAA[, -1], 2, function(x) sum(is.na(x))) > 10) + 1
 
-# compute and store the estimated co-variance matrices
-cov_results <- list()
+gev_results_ADCIRC <- gev_results(df_max_ADCIRC)
+gev_results_NOAA <- gev_results(df_max_NOAA[, -bad_stations]) # exclude bad years
 
-for(i in 1:length(gev_results)) {
+
+par_results <- function(gev_results) {
+  
+  # compute and store the GEV parameter MLEs
+  par_results <- list()
+
+  for(i in 1:length(gev_results)) {
+  
+    par_results[[i]] <- gev_results[[i]]$results$par
+  
+  }
+
+  names(par_results) <- names(gev_results) # add station names to results
+
+  return(par_results)
+
+}
+
+par_results_ADCIRC <- par_results(gev_results_ADCIRC)
+par_results_NOAA <- par_results(gev_results_NOAA)
+
+cov_results <- function(gev_results) {
+
+  # compute and store the estimated co-variance matrices
+  cov_results <- list()
+
+    for(i in 1:length(gev_results)) {
    
-  cov_results[[i]] <- solve(gev_results[[i]]$results$hessian)
+      cov_results[[i]] <- solve(gev_results[[i]]$results$hessian)
   
+    }
+
+    names(cov_results) <- names(gev_results) # add station names to results
+  
+    return(cov_results)
+
 }
 
-names(cov_results) <- colnames(df_max)[-1] # add station names to results
+cov_results_ADCIRC <- cov_results(gev_results_ADCIRC)
+cov_results_NOAA <- cov_results(gev_results_NOAA)
 ```
 
 ```{r specify model hyper parameters: L, d, and p}
-L <- nrow(df_meta_region3) # number of spatial locations
+L_ADCIRC <- length(gev_results_ADCIRC) # number of spatial locations used in ADCIRC model
+L_NOAA <- length(gev_results_NOAA) # number of spatial locations used in NOAA model
 
 d <- 3 # dimension of spatial process
 
@@ -109,35 +177,194 @@ tibble(x = 1:20, y = p_function(x)) %>%
 ```
 
 ```{r compute data vector: theta_hat}
-# compute data vector of MLEs for gev parameters
-theta_hat <- vector()
-
-# order one location after the other
-  for(i in 1:L) { # each location
-
-  theta_hat <- c(theta_hat, par_results[[i]])
-
-  }
+theta_hat <- function(par_results, L) {
   
-theta_hat
+  # compute data vector of MLEs for gev parameters
+  theta_hat <- vector()
+
+  # order one location after the other
+    for(i in 1:L) { # each location
+
+    theta_hat <- c(theta_hat, par_results[[i]])
+
+    }
+  
+  return(theta_hat)
+
+}
+
+theta_hat_ADCIRC <- theta_hat(par_results_ADCIRC, L_ADCIRC)
+theta_hat_NOAA <- theta_hat(par_results_NOAA, L_NOAA)
 ```
 
 ```{r compute distance matrix: dist_matrix}
-dist_matrix <- df_meta_region3 %>%
+dist_matrix_ADCIRC <- df_meta_region3 %>%
   select(lon, lat) %>%
   slice(26:1) %>% # re-arrange stations to match order of parameters fit by fevd
   distm(fun = distHaversine)/10000 # great-circle-distance via haversine method, assumes spherical earth
 
-rownames(dist_matrix) <- colnames(df_max[, -1])
-colnames(dist_matrix) <- colnames(df_max[, -1])
+dist_matrix_NOAA <- df_meta_region3 %>%
+  slice(26:1) %>% 
+  slice(-(bad_stations - 1)) %>% # re-arrange stations to match order of parameters fit by fevd
+  select(lon, lat) %>%
+  distm(fun = distHaversine)/10000 # great-circle-distance via haversine method, assumes spherical earth
+
+rownames(dist_matrix_ADCIRC) <- colnames(df_max_ADCIRC[, -1])
+colnames(dist_matrix_ADCIRC) <- colnames(df_max_ADCIRC[, -1])
+
+rownames(dist_matrix_NOAA) <- colnames(df_max_NOAA[, -c(1, bad_stations)])
+colnames(dist_matrix_NOAA) <- colnames(df_max_NOAA[, -c(1, bad_stations)])
 ```
 
 ```{r compute variance matrix for measurement error process: W}
-W <- bdiag(cov_results) %>% as.matrix()
+# block-diagonal approach (assuming station-by-station independence)
+W <- function(cov_results) {
+  
+  result <- bdiag(cov_results) %>% as.matrix()
+  
+  return(result)
+  
+}
+
+# non-parametric bootstrap approach
+gamma <- function(df_max, B, N, L) {
+  
+  gamma <- list() # each row is a bootstrap iteration with the order of the vector station by station, see Russell et al (2019)
+
+  for(j in 1:B) { # for each bootstrap iteration
+  
+    index_sample <- sample(1:N, replace = T) # sample indices with replacement
+    boot_max <- df_max[index_sample, ] # use those to sample years
+
+    boot_model <- list() # list to store independent GEV fits for each station
+
+    # fit and store the models in the prepared list
+    for(i in 2:ncol(df_max)) {
+      boot_model[[i-1]] <- fevd(na.omit(boot_max[[i]]), 
+                                use.phi = T, 
+                                type = 'GEV') # phi = T means log(sigma) used instead of sigma  
+    }
+
+    names(boot_model) <- colnames(boot_max)[-1] # add station names to results
+
+    # compute and store the GEV parameter MLEs
+    boot_par <- list()
+
+    for(i in 1:length(boot_model)) {
+  
+      boot_par[[i]] <- boot_model[[i]]$results$par
+  
+    }
+
+    names(boot_par) <- colnames(boot_max)[-1]
+
+    # combine the parameter estimates in a vector in a station-by-station order
+    storage <- vector()
+      for(i in 1:L) {
+        storage <- c(storage, boot_par[[i]])
+      }
+  
+    # add them to the list
+    gamma[[j]] <- storage
+
+  }
+
+  gamma <- Reduce(rbind, gamma)
+  rownames(gamma) <- 1:nrow(gamma)
+  
+  return(gamma)
+
+}
+
+gamma_ADCIRC <- gamma(df_max_ADCIRC, 
+                      1000, 
+                      nrow(df_max_ADCIRC), 
+                      L_ADCIRC)
+
+gamma_NOAA <- gamma(df_max_NOAA[, -bad_stations], 
+                    1000, 
+                    nrow(df_max_NOAA), 
+                    L_NOAA)
+
+
+W_boot <- function(gamma, L) {
+  
+  # non-parametric bootstrap estimate of the error covariance matrix
+  W_boot <- matrix(rep(0, d*L), nrow = d*L, ncol = d*L) # entry (i, j) of W is the covariance of rows i, j of gamma
+
+  for(i in 1:(d*L)) {
+  
+    for(j in 1:(d*L)) {
+    
+      W_boot[i, j] <- cov(gamma[, i], gamma[, j])
+    
+    }
+  
+  }
+  
+  return(W_boot)
+
+}
+
+# Wendland 2 covariance function; used in computation of tapering matrix
+wendland2 <- function(d, lambda) {
+  
+  if(d <= lambda) {
+    
+    result <- ((1 - d/lambda)^6) * ((35/3)*(d/lambda)^2 + 6*(d/lambda) + 1)
+    
+  } else {
+    
+    result <- 0
+    
+  }
+  
+  return(result)
+  
+}
+
+# compute tapering matrix based off of Wendland2 covariance function; ordered station by station
+tap <- function(dist_matrix, lambda, L) {
+
+  C_W2 <- matrix(rep(0, L*L), nrow = L, ncol = L)
+
+  for(i in 1:L){
+  
+    for(j in 1:L) {
+    
+      C_W2[i, j] <- wendland2(dist_matrix[i, j], lambda)
+    
+    }
+  
+  }
+  
+  tap <- kronecker(C_W2, rep(1, d) %*% t(rep(1, d)))
+  
+  return(tap)
+
+}
+
+W_boot_ADCIRC <- W_boot(gamma_ADCIRC, L_ADCIRC)
+W_boot_NOAA <- W_boot(gamma_NOAA, L_NOAA)
+
+tap_ADCIRC <- tap(dist_matrix_ADCIRC, 70, L_ADCIRC)
+tap_NOAA <- tap(dist_matrix_NOAA, 70, L_NOAA)
+
+# compute tapered non-parametric bootstrap estimate of error covariance matrix
+W_tap <- function(W_boot, tap) {
+  
+  W_tap <- hadamard.prod(W_boot, tap)
+  
+  return(W_tap)
+
+}
+
+W_tap_ADCIRC <- W_tap(W_boot_ADCIRC, tap_ADCIRC)
+W_tap_NOAA <- W_tap(W_boot_NOAA, tap_NOAA)
 ```
 
 ```{r compute variance matrix for spatially correlated random effects: S}
-S <- function(A, rho, dist) {
+S <- function(A, rho, dist, L) {
   
   V <- list()
   
@@ -151,7 +378,7 @@ S <- function(A, rho, dist) {
       
       for(k in 1:d) {
         
-        S[k, k] <- exp(-dist_matrix[i, j]/rho[k])
+        S[k, k] <- exp(-dist[i, j]/rho[k])
         
       }
       
@@ -177,85 +404,96 @@ S <- function(A, rho, dist) {
 
 ```{r compute Gaussian process likelihood}
 # par = parameters, W = error covariance, dist = station by station distances
-gaussian_process_likelihood <- function(par, data,  W, dist) {
+gaussian_process_likelihood <- function(par, data,  W, dist, L) {
 
-# co-regionalization matrix used to define S below 
-A <- matrix(0, nrow = d, ncol = d)
-A[upper.tri(A, diag = TRUE)] <- par[(d + 1):(p - d)]
-A <- t(A)
+#  co-regionalization matrix used to define S below 
+  A <- matrix(0, nrow = d, ncol = d)
+  A[upper.tri(A, diag = TRUE)] <- par[(d + 1):(p - d)]
+  A <- t(A)
 
-# variance matrix for spatially correlated random effects
-S <- S(A, par[(p - d + 1):p], dist)
+  # variance matrix for spatially correlated random effects
+  S <- S(A, par[(p - d + 1):p], dist, L)
 
-# mean vector  of the MVN density
-mu <- rep(par[1:d], L)
+  # mean vector  of the MVN density
+  mu <- rep(par[1:d], L)
 
-# variance matrix of the MVN density
-V <- S + W 
+  # variance matrix of the MVN density
+  V <- S + W 
   
-# MVVN negative log-likelihood
-log_lik <- -(L*d/2)*log(2*pi) - (1/2)*log(det(V)) - (1/2)*t(data - mu) %*% solve(V) %*% (data - mu)
-result <- -log_lik
+  # MVVN negative log-likelihood
+  log_lik <- -(L*d/2)*log(2*pi) - (1/2)*log(det(V)) - (1/2)*t(data - mu) %*% solve(V) %*% (data - mu)
+  result <- -log_lik
 
-# alternatively, use MVN density from mvtnorm package
-# result <- -dmvnorm(data, mean = mu, sigma = S + W, log = T)
+  # alternatively, use MVN density from mvtnorm package
+  # result <- -dmvnorm(data, mean = mu, sigma = S + W, log = T)
   
-return(result)
+  return(result)
 
 }
 ```
 
 ```{r 2nd stage of inference: given theta_hat and W; find beta, A and rho}
-start_time <- Sys.time() # track run time of optim
+gaussian_results <- function(theta_hat, W_tap, dist_matrix, L_data, seed) {
+  
+  start_time <- Sys.time() # track run time of optim
 
-# fit p dimensional Gaussian process with assumed form of W
-gaussian_process_fit <-  optim(c(runif(p - d, 0.1, 100), runif(d, 50, max(dist_matrix))), 
+  set.seed(seed)
+
+  # fit p dimensional Gaussian process with assumed form of W
+  gaussian_process_fit <-  optim(c(runif(p - d, 0.1, 100), runif(d, 50, max(dist_matrix))), 
                                gaussian_process_likelihood, 
-                               data = theta_hat, W = W, 
+                               data = theta_hat,
+                               W = W_tap, 
                                dist = dist_matrix, 
+                               L = L_data,
                                method = 'BFGS', 
                                hessian = T, 
                                control=list(maxit = 10000))
 
-# c(runif(p - d, 0.1, 100), runif(d, 50, max(dist_matrix)))
+  end_time <- Sys.time()
+  run_time <- end_time-start_time
 
-end_time <- Sys.time()
-run_time <- end_time-start_time
+  run_time
 
-run_time
+  # extract the mean parameter values over R^2
+  beta <- gaussian_process_fit$par[1:d]
 
-# extract the mean parameter values over R^2
-beta <- gaussian_process_fit$par[1:d]
+  # extract A, the co-regionalization  lower diagonal matrix
+  A <- matrix(0, nrow = d, ncol = d)
+  A[upper.tri(A, diag = TRUE)] <- gaussian_process_fit$par[(d + 1):(p - d)]
+  A <- t(A)
 
-# extract A, the co-regionalization  lower diagonal matrix
-A <- matrix(0, nrow = d, ncol = d)
-A[upper.tri(A, diag = TRUE)] <- gaussian_process_fit$par[(d + 1):(p - d)]
-A <- t(A)
+  # extract range parameters
+  rho <- gaussian_process_fit$par[(p - d + 1):p]
 
-# extract range parameters
-rho <- gaussian_process_fit$par[(p - d + 1):p]
+  # extract covariance matrix
+  eigen_cov <- sort(eigen(solve(gaussian_process_fit$hessian))$values)
 
-# extract covariance matrix
-min_eigen_cov <- ifelse(min(eigen(solve(gaussian_process_fit$hessian))$values) > 0, 'Yes', 'No')
-
-# organize results
-gaussian_results <- list(beta, A, rho, min_eigen_cov)
-names(gaussian_results) <- c('beta: mean parameter values over R^2', 
+  # organize results
+  gaussian_results <- list(beta, A, rho, eigen_cov)
+  names(gaussian_results) <- c('beta: mean parameter values over R^2', 
                              'A: co-regionalization matrix', 
                              'rho: range parameters',
-                             'Is approximate co-variance matrix of MLE positive semi-definite?')
+                             'eigenvalues of approximate covariance matrix')
+  
+  return(gaussian_results)
+  
+}
 
-gaussian_results
+gaussian_results_ADCIRC <- gaussian_results(theta_hat_ADCIRC, W_tap_ADCIRC, dist_matrix_ADCIRC, L_ADCIRC, 2)
+gaussian_results_NOAA <- gaussian_results(theta_hat_NOAA, W_tap_NOAA, dist_matrix_NOAA, L_NOAA, 2)
 ```
 
 ```{r implement kriging}
 # theta_hat is output from 1st stage of inference, par is output from second stage, W is error process covariance
-kriging_pred <- function(new_loc, theta_hat, rho, A, W) {
-
-  V <- S(A, rho, dist_matrix)
-  sigma_inv <- solve(V + W) # plug-in MLE estimate of covariance matrix for theta hat
-
+kriging_pred <- function(new_loc, known_loc, gaussian_results, theta_hat, dist_matrix, W, L) {
+  
   beta_hat <- gaussian_results$`beta: mean parameter values over R^2`
+  rho <- gaussian_results$`rho: range parameters`
+  A <- gaussian_results$`A: co-regionalization matrix`
+
+  V <- S(A, rho, dist_matrix, L)
+  sigma_inv <- solve(V + W) # plug-in MLE estimate of covariance matrix for theta hat
   
   tau <- matrix(rep(0, d*L), nrow = d, ncol = d*L) # compute covariance of new location and theta hat
   
@@ -267,7 +505,7 @@ kriging_pred <- function(new_loc, theta_hat, rho, A, W) {
      
      for(j in 1:d) { # for each spatial process
        
-       C[j, j] <- exp(-distHaversine(new_loc, df_meta_region3[27 - i, 4:3])*(10^-3)/rho[j])
+       C[j, j] <- exp(-distHaversine(new_loc, known_loc[i, ])*(10^-4)/rho[j])
        
      }
      
@@ -292,35 +530,56 @@ kriging_pred <- function(new_loc, theta_hat, rho, A, W) {
 ```
 
 ```{r compute kriging predictions and covariances for known stations}
-check <- list()
+known_loc_ADCIRC <- df_meta_region3 %>% slice(26:1) %>% select(lon, lat)
+known_loc_NOAA <- df_meta_region3 %>% slice(26:1) %>% slice(-bad_stations) %>% select(lon, lat)
 
-for(i in 1:L) {
+
+kriging_check_ADCIRC <- list()
+
+for(i in 1:L_ADCIRC) {
   
-check[[i]] <- kriging_pred(df_meta_region3[27 - i, 4:3], 
-              theta_hat, 
-              gaussian_results$`rho: range parameters`, 
-              gaussian_results$`A: co-regionalization matrix`,
-              W)
+kriging_check_ADCIRC[[i]] <- kriging_pred(known_loc_ADCIRC[i, ], 
+                              known_loc_ADCIRC,
+                              gaussian_results_ADCIRC,
+                              theta_hat_ADCIRC, 
+                              dist_matrix_ADCIRC,
+                              W_tap_ADCIRC,
+                              L_ADCIRC)
 
 }
   
-names(check) <- colnames(df_max[,-1])
+names(kriging_check_ADCIRC) <- colnames(df_max_ADCIRC[,-1])
 
-for(i in 1:L) {
+for(i in 1:L_ADCIRC) {
   
-  print(check[i])
-  print(par_results[i])
+  print(kriging_check_ADCIRC[i])
+  print(par_results_ADCIRC[i])
+  print(cov_results_ADCIRC[i])
   
 }
 
+kriging_check_NOAA <- list()
 
-coastline <- tibble(lon = seq(-79, -72, length.out = length(seq(30, 41, by = 0.1))), 
-                    lat = seq(30, 41, by = 0.1))
-    
-coastline_storage <- list()
+for(i in 1:L_NOAA) {
+  
+kriging_check_NOAA[[i]] <- kriging_pred(known_loc_NOAA[i, ], 
+                              known_loc_NOAA,
+                              gaussian_results_NOAA,
+                              theta_hat_NOAA, 
+                              dist_matrix_NOAA,
+                              W_tap_NOAA,
+                              L_NOAA)
 
-for(i in 1:nrow(coastline)) {
-  coastline_storage[[i]] <- kriging_pred(coastline[i, ], theta_hat, gaussian_results$`rho: range parameters`, gaussian_results$`A: co-regionalization matrix`, W)
+}
+  
+names(kriging_check_NOAA) <- colnames(df_max_NOAA[, -c(1, bad_stations)])
+
+for(i in 1:L_NOAA) {
+  
+  print(kriging_check_NOAA[i])
+  print(par_results_NOAA[i])
+  print(cov_results_NOAA[i])
+  
 }
 ```
 
@@ -358,16 +617,95 @@ return_levels <- function(par, cov, p) {
 }
 ```
 
-```{r compute return levels and variances}
+```{r define coastline region to generate predictions over}
+# generate longitude sequence
+reps <- length(seq(0.00, 10, by = 0.2))
+
+lon_storage <- vector()
+for(i in seq(0.0, 10, by = 0.2)) {
+  
+  lon_storage <- c(lon_storage, seq(-82 + i, -75 + i, length.out = length(seq(30, 45, by = 0.1))))
+  
+}
+
+# store lon-lat coordinates in tibble
+coastline <- tibble(lon = lon_storage, 
+                    lat = c(rep(seq(30, 45, by = 0.1), reps)
+                            )
+                    ) 
+```
+
+
+```{r compute kriging predictions and covariances over coastline}
+coastline_kriging <- function(known_loc, gaussian_results, theta_hat, dist_matrix, W_tap, L) {
+  
+  coastline_storage <- list()
+
+  for(i in 1:nrow(coastline)) {
+  
+    progress(i)
+  
+    coastline_storage[[i]] <- kriging_pred(coastline[i, ],
+                                          known_loc,
+                                          gaussian_results,
+                                          theta_hat,
+                                          dist_matrix,
+                                          W_tap,
+                                          L)
+  
+  }
+
+  return(coastline_storage)
+  
+}
+
+coastline_kriging_ADCIRC <- coastline_kriging(known_loc_ADCIRC, 
+                                              gaussian_results_ADCIRC, 
+                                              theta_hat_ADCIRC, 
+                                              dist_matrix_ADCIRC, 
+                                              W_tap_ADCIRC, 
+                                              L_ADCIRC)
+
+coastline_kriging_NOAA <- coastline_kriging(known_loc_NOAA, 
+                                              gaussian_results_NOAA, 
+                                              theta_hat_NOAA, 
+                                              dist_matrix_NOAA, 
+                                              W_tap_NOAA, 
+                                              L_NOAA)
+```
+
+```{r compute return levels and variances for coastline}
 v1 <- vector() # storage for 1/p return levels
 v2 <- vector() # storage for corresponding sd
 
+p <- 1/10
+
 for(i in 1:nrow(coastline)) {
-v1[i] <- return_levels(coastline_storage[[i]][[1]], coastline_storage[[i]][[2]], 1/20)$'1/p return level'
-v2[i] <- return_levels(coastline_storage[[i]][[1]], coastline_storage[[i]][[2]], 1/20)$'sd'
+v1[i] <- return_levels(coastline_kriging_ADCIRC[[i]][[1]], coastline_kriging_ADCIRC[[i]][[2]], p)$'1/p return level'
+v2[i] <- return_levels(coastline_kriging_ADCIRC[[i]][[1]], coastline_kriging_ADCIRC[[i]][[2]], p)$'sd'
 }
 
-return_level_results <- tibble(return_levels = v1, sd = v2, lower95 = v1 - qnorm(.975)*v2, upper95 = v1 + qnorm(.975)*v1, lon = coastline$lon, lat = coastline$lat)
+w1 <- vector() # storage for 1/p return levels
+w2 <- vector() # storage for corresponding sd
+
+for(i in 1:nrow(coastline)) {
+w1[i] <- return_levels(coastline_kriging_NOAA[[i]][[1]], coastline_kriging_ADCIRC[[i]][[2]], p)$'1/p return level'
+w2[i] <- return_levels(coastline_kriging_NOAA[[i]][[1]], coastline_kriging_ADCIRC[[i]][[2]], p)$'sd'
+}
+
+return_level_results_ADCIRC <- tibble(return_levels = v1, 
+                                      sd = v2, 
+                                      lower95 = v1 - qnorm(.975)*v2, 
+                                      upper95 = v1 + qnorm(.975)*v2, 
+                                      lon = coastline$lon, 
+                                      lat = coastline$lat)
+
+return_level_results_NOAA <- tibble(return_levels = w1, 
+                                      sd = w2, 
+                                      lower95 = w1 - qnorm(.975)*w2, 
+                                      upper95 = w1 + qnorm(.975)*w2, 
+                                      lon = coastline$lon, 
+                                      lat = coastline$lat)
 ```
 
 ```{r produce return level plots, warning = F}
@@ -376,34 +714,89 @@ states <- map_data("state")
 east_coast <- states %>%
   filter(region %in% c('florida', 'georgia', 'south carolina', 'north carolina', 'virginia', 'district of columbia', 'pennsylvania', 'maryland', 'delaware', 'new jersey', 'connecticut', 'new york', 'rhode island', 'massachusetts', 'vermont', 'new hampshire', 'maine' ))
 
-ggplot() + 
+# 2D plot (ADCIRC)
+map1 <- ggplot() + 
   geom_polygon(data = east_coast, aes(x = long, y = lat, group = group), color = "white") +
   geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = 0.01) +
-  geom_point(data = return_level_results, aes(x = lon, y = lat, color = return_levels)) + 
-  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'red', check_overlap = T) +
-  labs(title = '1/p return levels along U.S. East Coast')
-  guides(fill = F)
-  
-plot_ly(return_level_results, 
+  geom_point(data = return_level_results_ADCIRC, aes(x = lon, y = lat, color = return_levels, size = sd)) + 
+  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'green', check_overlap = T) +
+  labs(title = '1/p Return Sea-Level Along U.S. East Coast (ADCIRC)') + 
+  guides(fill = F) +
+  scale_color_gradient(low = "blue", high = "red")
+
+# 3D plot (ADCIRC)
+fig1 <- plot_ly(return_level_results_ADCIRC, 
         x = ~lon, 
         y = ~lat, 
-        z = ~return_levels, 
+        z = ~return_levels,
+        #color = ~sd,
         mode = 'markers', 
         type = 'scatter3d', 
-        marker = list(size = 1, symbol = 104)) %>%
-  add_trace(data = return_level_results, 
+        marker = list(size = 1, color = 'lightskyblue', symbol = 104)) %>%
+        # scene = 'scene1') %>%
+    add_trace(data = return_level_results_ADCIRC, 
             x = ~lon, 
             y = ~lat, 
             z = ~upper95,
             mode = "markers", 
             type = "scatter3d", 
-            marker = list(size = 1, color = "red", symbol = 104)) %>%
-    add_trace(data = return_level_results, 
+            marker = list(size = 1, color = "pink", symbol = 104)) %>%
+    add_trace(data = return_level_results_ADCIRC, 
             x = ~lon, 
             y = ~lat, 
             z = ~lower95,
             mode = "markers", 
             type = "scatter3d", 
-            marker = list(size = 1, color = "red", symbol = 104))
-  
+            marker = list(size = 1, color = "pink", symbol = 104)) %>%
+    layout(title = '1/p Return Sea Level Surface (ADCIRC) Over the U.S. East Coast',
+             scene = list(xaxis = list(title = 'Longitude'), 
+                        yaxis = list(title = 'Latitude'), 
+                        zaxis = list(title = '1/p Return Sea Level (m)')))
+
+# 2D plot (NOAA)
+map2 <- ggplot() + 
+  geom_polygon(data = east_coast, aes(x = long, y = lat, group = group), color = "white") +
+  geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = 0.01) +
+  geom_point(data = return_level_results_NOAA, aes(x = lon, y = lat, color = return_levels, size = sd)) + 
+  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'green', check_overlap = T) +
+  labs(title = '1/p Return Sea-Level Along U.S. East Coast (NOAA)') + 
+  guides(fill = F) +
+  scale_color_gradient(low = "blue", high = "red")
+
+# 3D plot (NOAA)
+fig2 <- plot_ly(return_level_results_NOAA, 
+        x = ~lon, 
+        y = ~lat, 
+        z = ~return_levels,
+        #color = ~sd,
+        mode = 'markers', 
+        type = 'scatter3d', 
+        marker = list(size = 1, color = 'lightgreen', symbol = 104)) %>%
+        # scene = 'scene2') %>%
+    add_trace(data = return_level_results_NOAA, 
+            x = ~lon, 
+            y = ~lat, 
+            z = ~upper95,
+            mode = "markers", 
+            type = "scatter3d", 
+            marker = list(size = 1, color = "violet", symbol = 104)) %>%
+    add_trace(data = return_level_results_NOAA, 
+            x = ~lon, 
+            y = ~lat, 
+            z = ~lower95,
+            mode = "markers", 
+            type = "scatter3d", 
+            marker = list(size = 1, color = "violet", symbol = 104)) %>%
+    layout(title = '1/p Return Sea Level Surface (NOAA) Over the U.S. East Coast', 
+           scene = list(xaxis = list(title = 'Longitude'),
+                        yaxis = list(title = 'Latitude'),
+                        zaxis = list(title ='1/p Return Sea Level (m)')))
+
+
+map1
+map2
+fig1
+fig2
+
+subplot(fig1, fig2) %>% layout(title = "1/p Return Sea Level Surface Over the U.S. East Coast")
 ```
