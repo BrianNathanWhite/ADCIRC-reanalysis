@@ -126,6 +126,13 @@ p8 <- NOAA_OBS_Detided_region3 %>% # complete time-series
 
 grid.arrange(p7, p8, ncol = 2)
 
+ADC_POST_Detided_region3 %>%
+  select(-year, -month, -day) %>%
+  melt(id.vars = 'TIME') %>%
+  ggplot(aes(x = TIME, y = value)) +
+  geom_point() +
+  facet_wrap(~variable)
+
 # box plots each station
 ADC_POST_Detided_region3 %>%
   select(-TIME, -year, -month) %>%

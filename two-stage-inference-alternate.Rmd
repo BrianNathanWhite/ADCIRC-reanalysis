@@ -109,7 +109,7 @@ gev_results <- function(df_max) {
   
 }
 
-# which stations have yearly maxima missing years?
+# which stations have more than 10 missing years?
 bad_stations <- which(apply(df_max_NOAA[, -1], 2, function(x) sum(is.na(x))) > 10) + 1
 
 gev_results_ADCIRC <- gev_results(df_max_ADCIRC)
@@ -201,7 +201,7 @@ theta_hat_NOAA <- theta_hat(par_results_NOAA, L_NOAA)
 dist_matrix_ADCIRC <- df_meta_region3 %>%
   select(lon, lat) %>%
   slice(26:1) %>% # re-arrange stations to match order of parameters fit by fevd
-  distm(fun = distHaversine)/10000 # great-circle-distance via haversine method, assumes spherical earth
+  distm(fun = distHaversine)/10000 # great-circle-distance via haversine method, assumes spherical earth; units of 10,000 meters
 
 dist_matrix_NOAA <- df_meta_region3 %>%
   slice(26:1) %>% 
