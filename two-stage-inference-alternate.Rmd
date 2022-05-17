@@ -12,6 +12,8 @@ knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F, tidy = TRU
 ```{r load packages}
 library(tidyverse) # data manipulation meta-package
 library(reshape2) # for combining multiple variables into single column
+library(htmlwidgets) # for exporting plotly figures in html
+library(RColorBrewer) # adds color palattees for plotly
 library(Matrix) # for use in computing Kronecker product
 library(matrixcalc) # for use in computing Hadamaard product
 library(blockmatrix) # compute block matrices
@@ -216,7 +218,7 @@ rownames(dist_matrix_NOAA) <- colnames(df_max_NOAA[, -c(1, bad_stations)])
 colnames(dist_matrix_NOAA) <- colnames(df_max_NOAA[, -c(1, bad_stations)])
 ```
 
-```{r compute variance matrix for measurement error process: W}
+```{r compute variance matrix for measurement error process: W, warning = F}
 # block-diagonal approach (assuming station-by-station independence)
 W <- function(cov_results) {
   
@@ -678,7 +680,7 @@ coastline_kriging_NOAA <- coastline_kriging(known_loc_NOAA,
 v1 <- vector() # storage for 1/p return levels
 v2 <- vector() # storage for corresponding sd
 
-p <- 1/10
+p <- 1/100
 
 for(i in 1:nrow(coastline)) {
 v1[i] <- return_levels(coastline_kriging_ADCIRC[[i]][[1]], coastline_kriging_ADCIRC[[i]][[2]], p)$'1/p return level'
@@ -706,6 +708,27 @@ return_level_results_NOAA <- tibble(return_levels = w1,
                                       upper95 = w1 + qnorm(.975)*w2, 
                                       lon = coastline$lon, 
                                       lat = coastline$lat)
+
+write_csv(return_level_results_ADCIRC, './data/return_level_results_ADCIRC.csv')
+write_csv(return_level_results_NOAA, './data/return_level_results_NOAA.csv')
+```
+
+```{r compute return levels and variances for known stations}
+x1 <- vector()
+x2 <- vector()
+
+for(i in 1:nrow(df_meta_region3)) {
+  x1[i] <- return_levels(kriging_check_ADCIRC[[i]][[1]], kriging_check_ADCIRC[[i]][[2]], p)$'1/p return level'
+  x2[i] <- return_levels(kriging_check_ADCIRC[[i]][[1]], kriging_check_ADCIRC[[i]][[2]], p)$'sd'
+}
+
+return_level_results_ADCIRC_check <- tibble(return_levels = x1,
+                                            sd = x2,
+                                            lower95 = x1 - qnorm(.975)*x2,
+                                            upper95 = x1 + qnorm(.975)*x2,
+                                            lon = df_meta_region3[26:1, 4],
+                                            lat = df_meta_region3[26:1, 3],
+                                            stationname = df_meta_region3[26:1, 2])
 ```
 
 ```{r produce return level plots, warning = F}
@@ -718,48 +741,83 @@ east_coast <- states %>%
 map1 <- ggplot() + 
   geom_polygon(data = east_coast, aes(x = long, y = lat, group = group), color = "white") +
   geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = 0.01) +
-  geom_point(data = return_level_results_ADCIRC, aes(x = lon, y = lat, color = return_levels, size = sd)) + 
+  geom_point(data = return_level_results_ADCIRC, aes(x = lon, y = lat, color = return_levels)) + 
   geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'green', check_overlap = T) +
-  labs(title = '1/p Return Sea-Level Along U.S. East Coast (ADCIRC)') + 
+  labs(title = '100-Year Return Level Surface for Daily Mean Sea-Level over the U.S. East Coast (ADCIRC)') + 
   guides(fill = F) +
   scale_color_gradient(low = "blue", high = "red")
 
-# 3D plot (ADCIRC)
+# 3D plot (ADCIRC). colorscale options: Greys, YlGnBu, Greens, YlOrRd, Bluered, RdBu, Reds, Blues, Picnic, Rainbow, Portland, Jet, Hot, Blackbody, Earth, Electric, Viridis, Cividis
+
 fig1 <- plot_ly(return_level_results_ADCIRC, 
         x = ~lon, 
         y = ~lat, 
         z = ~return_levels,
         #color = ~sd,
+        #colors = 'GnBu',
+        marker = list(size = 1, 
+                      color = ~sd, 
+                      colorscale = 'Portland', 
+                      showscale = T, 
+                      colorbar = list(len = 0.5, 
+                                      title = list(text = 'Standard Deviation (m)')) 
+                      ),
+        legendgrouptitle = list(text = 'Data'),
         mode = 'markers', 
-        type = 'scatter3d', 
-        marker = list(size = 1, color = 'lightskyblue', symbol = 104)) %>%
-        # scene = 'scene1') %>%
-    add_trace(data = return_level_results_ADCIRC, 
+        type = 'scatter3d',
+        name = '100-Year Return Level Surface (ADCIRC)'
+        ) %>% 
+      add_trace(data = return_level_results_ADCIRC_check,
+                x = ~lon,
+                y = ~lat,
+                z = ~return_levels,
+                marker = list(color = 'black', 
+                              size = 1,
+                              showscale = F),
+                mode = 'markers',
+                type = 'scatter3d',
+                text = ~stationname,
+                textposition = 'middle right',
+                textfont = list(color = 'black', size = 10),
+                name = 'NOAA Observation Stations') %>%
+      add_trace(data = return_level_results_ADCIRC, 
             x = ~lon, 
             y = ~lat, 
             z = ~upper95,
             mode = "markers", 
             type = "scatter3d", 
-            marker = list(size = 1, color = "pink", symbol = 104)) %>%
-    add_trace(data = return_level_results_ADCIRC, 
+            marker = list(size = 0.5, 
+                          color = 'lightskyblue', 
+                          symbol = 104,
+                          showscale = F),
+            name = 'Upper 95% CI') %>%
+     add_trace(data = return_level_results_ADCIRC, 
             x = ~lon, 
             y = ~lat, 
             z = ~lower95,
             mode = "markers", 
             type = "scatter3d", 
-            marker = list(size = 1, color = "pink", symbol = 104)) %>%
-    layout(title = '1/p Return Sea Level Surface (ADCIRC) Over the U.S. East Coast',
+            marker = list(size = 0.5, 
+                          color = "lightskyblue", 
+                          symbol = 104,
+                          showscale = F),
+            name = 'Lower 95% CI'
+            ) %>%
+      layout(title = '100-Year Return Level Surface (ADCIRC) for Daily-Mean Sea-Level over the U.S. East Coast',
              scene = list(xaxis = list(title = 'Longitude'), 
-                        yaxis = list(title = 'Latitude'), 
-                        zaxis = list(title = '1/p Return Sea Level (m)')))
+                          yaxis = list(title = 'Latitude'), 
+                          zaxis = list(title = '100-Year Return Level (m)'))
+           )
+fig1
+
 
 # 2D plot (NOAA)
 map2 <- ggplot() + 
   geom_polygon(data = east_coast, aes(x = long, y = lat, group = group), color = "white") +
   geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = 0.01) +
-  geom_point(data = return_level_results_NOAA, aes(x = lon, y = lat, color = return_levels, size = sd)) + 
+  geom_point(data = return_level_results_NOAA, aes(x = lon, y = lat, color = return_levels)) + 
   geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'green', check_overlap = T) +
-  labs(title = '1/p Return Sea-Level Along U.S. East Coast (NOAA)') + 
+  labs(title = '100-Year Return Level Surface for Daily Mean Sea-Level over the U.S. East Coast (NOAA)') + 
   guides(fill = F) +
   scale_color_gradient(low = "blue", high = "red")
 
@@ -771,7 +829,9 @@ fig2 <- plot_ly(return_level_results_NOAA,
         #color = ~sd,
         mode = 'markers', 
         type = 'scatter3d', 
-        marker = list(size = 1, color = 'lightgreen', symbol = 104)) %>%
+        marker = list(size = 1, 
+                      color = 'lightgreen', 
+                      symbol = 104)) %>%
         # scene = 'scene2') %>%
     add_trace(data = return_level_results_NOAA, 
             x = ~lon, 
@@ -779,18 +839,22 @@ fig2 <- plot_ly(return_level_results_NOAA,
             z = ~upper95,
             mode = "markers", 
             type = "scatter3d", 
-            marker = list(size = 1, color = "violet", symbol = 104)) %>%
+            marker = list(size = 1, 
+                          color = "violet", 
+                          symbol = 104)) %>%
     add_trace(data = return_level_results_NOAA, 
             x = ~lon, 
             y = ~lat, 
             z = ~lower95,
             mode = "markers", 
             type = "scatter3d", 
-            marker = list(size = 1, color = "violet", symbol = 104)) %>%
-    layout(title = '1/p Return Sea Level Surface (NOAA) Over the U.S. East Coast', 
+            marker = list(size = 1, 
+                          color = "violet", 
+                          symbol = 104)) %>%
+    layout(title = '100-Year Return Level Surface (NOAA) for Daily Mean Sea-Level over the U.S. East Coast', 
            scene = list(xaxis = list(title = 'Longitude'),
                         yaxis = list(title = 'Latitude'),
-                        zaxis = list(title ='1/p Return Sea Level (m)')))
+                        zaxis = list(title ='100-Year Return Level (m)')))
 
 
 map1
@@ -798,5 +862,10 @@ map2
 fig1
 fig2
 
-subplot(fig1, fig2) %>% layout(title = "1/p Return Sea Level Surface Over the U.S. East Coast")
+subplot(fig1, fig2) %>% layout(title = "100-Year Return Level Surface for Daily Mean Sea-Level over the U.S. East Coast")
+```
+
+
+```{r export plotly fig in html form, warning = F}
+saveWidget(fig1, "./figures/fig1.html", selfcontained = F, libdir = "lib")
 ```

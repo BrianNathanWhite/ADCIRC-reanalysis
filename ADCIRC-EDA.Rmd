@@ -75,14 +75,16 @@ ggplot() +
 p1 <- ADC_POST_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2014-01-01 23:00:00') %>% # one day
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
-  geom_point(col = 'blue', size = 0.5) +
-  labs(x = 'Hour', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach')
+  geom_point(col = 'blue') +
+  labs(x = 'Hour', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach') +
+  ylim(-0.1, 0.15)
 
 p2 <- NOAA_OBS_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2014-01-01 23:00:00') %>% # one day
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
-  geom_point(col = 'red', size = 0.5) +
-  labs(x = 'Hour', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Hourly Sea-Level at Wrightsville Beach')
+  geom_point(col = 'red') +
+  labs(x = 'Hour', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Hourly Sea-Level at Wrightsville Beach') +
+  ylim(-0.1, 0.15)
 
 grid.arrange(p1, p2, ncol = 2)
 
@@ -90,13 +92,15 @@ p3 <- ADC_POST_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2014-02-01 00:00:00') %>% # one month
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
   geom_point(col = 'blue', size = 0.1) +
-  labs(x = 'Month', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach')
+  labs(x = 'Month', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach') +
+  ylim(-0.2, 0.5)
 
 p4 <- NOAA_OBS_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2014-02-01 00:00:00') %>% # one month
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
   geom_point(col = 'red', size = 0.1) +
-  labs(x = 'Month', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Hourly Sea-Level at Wrightsville Beach')
+  labs(x = 'Month', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Hourly Sea-Level at Wrightsville Beach') +
+  ylim(-0.2, 0.5)
 
 grid.arrange(p3, p4, ncol = 2)
 
@@ -104,34 +108,35 @@ p5 <- ADC_POST_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2015-01-01 00:00:00') %>% # one year
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
   geom_point(col = 'blue', size = 0.1) +
-  labs(x = 'Year', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach')
+  labs(x = 'Year', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach') +
+  ylim(-0.3, 0.6)
+  
 
 p6 <- NOAA_OBS_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2015-01-01 00:00:00') %>% # one year
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
   geom_point(col = 'red', size = 0.1) +
-  labs(x = 'Year', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Hourly Sea-Level at Wrightsville Beach')
+  labs(x = 'Year', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Hourly Sea-Level at Wrightsville Beach')  +
+  ylim(-0.3, 0.6)
 
 grid.arrange(p5, p6, ncol = 2)
 
 p7 <- ADC_POST_Detided_region3 %>% # complete time-series%
         ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
         geom_point(col = 'blue', size = 0.1) +
-        labs(x = 'Year', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach')
+        labs(x = 'Year', 
+             y = 'Sea-level (m)', 
+             title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach') +
+        ylim(-1, 2)
+
 
 p8 <- NOAA_OBS_Detided_region3 %>% # complete time-series
         ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
         geom_point(col = 'red', size = 0.1) +
-        labs(x = 'Year', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Hourly Sea-Level at Wrightsville Beach')
+        labs(x = 'Year', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Hourly Sea-Level at Wrightsville Beach') +
+        ylim(-1, 2)
 
 grid.arrange(p7, p8, ncol = 2)
-
-ADC_POST_Detided_region3 %>%
-  select(-year, -month, -day) %>%
-  melt(id.vars = 'TIME') %>%
-  ggplot(aes(x = TIME, y = value)) +
-  geom_point() +
-  facet_wrap(~variable)
 
 # box plots each station
 ADC_POST_Detided_region3 %>%
@@ -165,14 +170,16 @@ df_mean_NOAA <- NOAA_OBS_Detided_region3 %>%
 p9 <- df_mean_ADCIRC %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2014-02-01 00:00:00') %>%
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
-  geom_point(col = 'blue', size = 0.5) +
-  labs(x = 'Day', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Daily Sea-Level Means')
+  geom_point(col = 'blue') +
+  labs(x = 'Day', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Daily Mean Sea-Level at Wrightsville Beach') +
+  ylim(0, 0.4)
 
 p10 <- df_mean_NOAA %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2014-02-01 00:00:00') %>%
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
-  geom_point(col = 'red', size = 0.5) +
-  labs(x = 'Day', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Daily Sea-Level Means')
+  geom_point(col = 'red') +
+  labs(x = 'Day', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Daily Mean Sea-Level at Wrightsville Beach') +
+  ylim(0, 0.4)
 
 grid.arrange(p9, p10, ncol = 2)
 
@@ -180,25 +187,29 @@ p11 <- df_mean_ADCIRC %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2015-01-01 00:00:00') %>%
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
   geom_point(col = 'blue', size = 0.5) +
-  labs(x = 'Month', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Daily Sea-Level Means')
+  labs(x = 'Month', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Daily Mean Sea-Level at Wrightsville Beach') +
+  ylim(-0.2, 0.4)
 
 p12 <- df_mean_NOAA %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2015-01-01 00:00:00') %>%
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
   geom_point(col = 'red', size = 0.5) +
-  labs(x = 'Month', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Daily Sea-Level Means')
+  labs(x = 'Month', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Daily Mean Sea-Level at Wrightsville Beach') +
+  ylim(-0.2, 0.4)
 
 grid.arrange(p11, p12, ncol = 2)
 
 p13 <- df_mean_ADCIRC %>%
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
   geom_point(col = 'blue', size = 0.1) +
-  labs(x = 'Year', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Daily Sea-Level Means')
+  labs(x = 'Year', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Daily Mean Sea-Level at Wrightsville Beach') +
+  ylim(-0.5, 0.5)
 
 p14 <- df_mean_NOAA %>%
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
   geom_point(col = 'red', size = 0.1) +
-  labs(x = 'Year', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Daily Sea-Level Means')
+  labs(x = 'Year', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Daily Mean Sea-Level at Wrightsville Beach') + 
+  ylim(-0.5, 0.5)
 
 grid.arrange(p13, p14, ncol = 2)
 
@@ -209,7 +220,7 @@ grid.arrange(p13, p14, ncol = 2)
   ggplot(aes(x = TIME, y = value)) +
   geom_point(col = 'blue', size = 0.01) +
   facet_wrap(~variable) +
-  labs(x = 'Year', y = 'Sea-level (m)', title = 'Time-Series for ADCIRC Reconstruction of Detided Daily Sea-Level Means')
+  labs(x = 'Year', y = 'Sea-level (m)', title = 'Time-Series for ADCIRC Reconstruction of Detided Daily Mean Sea-Level')
 
   df_mean_NOAA[, -c(1, 2, 3)] %>%
   as.tibble() %>%
@@ -220,19 +231,19 @@ grid.arrange(p13, p14, ncol = 2)
   labs(x = 'Year', y = 'Sea-level (m)', title = 'Time-Series for Observed (NOAA) Detided Daily Sea-Level Means')
 
 # examine box plots for detided daily mean sea-level
-  f_mean_ADCIRC[, -c(1, 2, 3)] %>%
+  df_mean_ADCIRC[, -c(1, 2, 3)] %>%
   as.tibble() %>%
   melt(id.vars = c('TIME')) %>%
   ggplot(aes(x = value, y = variable)) +
   geom_boxplot(outlier.size = 0.1, color = 'blue') +
-  labs(x = 'Sea-level (m)', y = 'Station', title = 'Boxplots for ADCIRC Reconstruction of Detided Daily Sea-Level Means')
+  labs(x = 'Sea-level (m)', y = 'Station', title = 'Boxplots for ADCIRC Reconstruction of Detided Daily Mean Sea-Level')
 
   df_mean_NOAA[, -c(1, 2, 3)] %>%
   as.tibble() %>%
   melt(id.vars = c('TIME')) %>%
   ggplot(aes(x = value, y = variable)) +
   geom_boxplot(outlier.size = 0.1, color = 'red') +
-  labs(x = 'Sea-level (m)', y = 'Station', title = 'Boxplots for Observed (NOAA) Detided Daily Sea-Level Means')
+  labs(x = 'Sea-level (m)', y = 'Station', title = 'Boxplots for Observed (NOAA) Detided Daily Mean Sea-Level')
 ```
 
 
@@ -279,14 +290,16 @@ df_max_NOAA <- df_mean_NOAA[, -(2:4)] %>%
 # single station (ADCIRC)
 p15 <- df_max_ADCIRC %>%
   ggplot(aes(x = year, y = WrightsvilleBeach)) +
-  geom_point(col = 'blue', size = 0.5) +
-  labs(x = 'Year', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Daily Mean Sea-Level Maxima for Wrightsville each')
+  geom_point(col = 'blue') +
+  labs(x = 'Year', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Sea-Level Maxima for Wrightsville Beach') +
+  ylim(0.3, 0.7)
 
 # single station (NOAA)
 p16 <- df_max_NOAA %>%
   ggplot(aes(x = year, y = WrightsvilleBeach)) +
-  geom_point(col = 'red', size = 0.5) +
-  labs(x = 'Year', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Daily Mean Sea-Level Maxima for Wrightsville Beach')
+  geom_point(col = 'red') +
+  labs(x = 'Year', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Sea-Level Maxima for Wrightsville Beach') +
+  ylim(0.3, 0.7)
 
 grid.arrange(p15, p16, ncol = 2)
 
@@ -303,7 +316,9 @@ df_max_ADCIRC %>%
   ggplot(aes(x = year, y = value)) +
   geom_point(col = 'blue', size = 0.01) +
   facet_wrap(~variable) +
-  labs(x = 'Year', y = 'Sea-level (m)', title = 'Time-Series for ADCIRC Reconstruction of Detided Daily Mean Sea-Level Maxima') +
+  labs(x = 'Year', 
+       y = 'Sea-level (m)', 
+       title = 'Time-Series for ADCIRC Reconstruction of Detided Daily Mean Sea-Level Maxima') +
   scale_x_continuous(breaks = c(1980, 1995, 2010))
 
 df_max_NOAA %>%
@@ -321,14 +336,22 @@ df_max_ADCIRC %>%
   melt() %>%
   ggplot(aes(x = value, y = variable)) +
   geom_boxplot(outlier.size = 0.01, col = 'blue') +
-  labs(y = 'Station', x = 'sea-level (m)', title = 'Boxplots for ADCIRC Reconstruction of Detided Daily Mean Sea-Level Maxima')
+  labs(y = 'Station',
+       x = 'sea-level (m)', 
+       title = 'Boxplots for ADCIRC Reconstruction of Detided Daily Mean Sea-Level Maxima') +
+  xlim(0, 1.5)
 
 df_max_NOAA %>%
   select(-year) %>%
   melt() %>%
   ggplot(aes(x = value, y = variable)) +
   geom_boxplot(outlier.size = 0.01, col = 'red') +
-  labs(y = 'Station', x = 'sea-level (m)', title = 'Boxplots for Observed (NOAA) Detided Daily Mean Sea-Level Maxima')
+  labs(y = 'Station', 
+       x = 'sea-level (m)', 
+       title = 'Boxplots for Observed (NOAA) Detided Daily Mean Sea-Level Maxima') +
+  xlim(0, 1.5)''''''[
+    
+  ]
 
 # density plots for maxima 
 df_max_ADCIRC %>%
