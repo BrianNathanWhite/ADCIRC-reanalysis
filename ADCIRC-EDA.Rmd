@@ -11,12 +11,15 @@ knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F, tidy=TRUE)
 
 ```{r, include = F}
 # data wrangling & visualization
-library(tidyverse)
-library(reshape2)
-library(GGally)
-library(gridExtra)
+library(tidyverse) # data science workflow
+library(reshape2) # combining data columns
+library(gridExtra) 
+library(gganimate) # animates ggplot objects
+library(gifski) # renders gifs
+
 # extreme value analysis
-library(extRemes)
+library(extRemes) # univariate extremes
+
 # working with spatial data
 library(maps)
 library(ggmap)
@@ -91,9 +94,17 @@ grid.arrange(p1, p2, ncol = 2)
 p3 <- ADC_POST_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2014-02-01 00:00:00') %>% # one month
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
-  geom_point(col = 'blue', size = 0.1) +
+  geom_line(col = 'blue', size = 0.1) +
   labs(x = 'Month', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach') +
   ylim(-0.2, 0.5)
+
+  p3_n <- ADC_POST_Detided_region3 %>% # number of time observations in timeseries
+  filter('2014-01-01 0:00:00' <= TIME, TIME <= '2014-02-01 00:00:00') %>%
+  nrow()
+
+  play3 <- p3 + transition_reveal(1:p3_n)
+  animate(play3, height = 400, width = 550)
+  anim_save(filename = "hourly-month-detided-ADCIRC-wrighstville.gif", path ='./figures')
 
 p4 <- NOAA_OBS_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2014-02-01 00:00:00') %>% # one month
@@ -102,15 +113,22 @@ p4 <- NOAA_OBS_Detided_region3 %>%
   labs(x = 'Month', y = 'Sea-level (m)', title = 'Observed (NOAA) Detided Hourly Sea-Level at Wrightsville Beach') +
   ylim(-0.2, 0.5)
 
-grid.arrange(p3, p4, ncol = 2)
+grid.arrange(p3, p4, ncol = 2) 
 
 p5 <- ADC_POST_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2015-01-01 00:00:00') %>% # one year
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
-  geom_point(col = 'blue', size = 0.1) +
+  geom_line(col = 'blue', size = 0.1) +
   labs(x = 'Year', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach') +
   ylim(-0.3, 0.6)
-  
+
+  p5_n <- ADC_POST_Detided_region3 %>% # number of time observations in timeseries
+  filter('2014-01-01 0:00:00' <= TIME, TIME <= '2015-01-01 00:00:00') %>%
+  nrow()
+
+  play5 <- p5 + transition_reveal(1:p5_n)
+  animate(play5, height = 400, width = 550)
+  anim_save(filename = "hourly-year-detided-ADCIRC-wrighstville.gif", path ='./figures')
 
 p6 <- NOAA_OBS_Detided_region3 %>%
   filter('2014-01-01 0:00:00' <= TIME, TIME <= '2015-01-01 00:00:00') %>% # one year
@@ -128,7 +146,6 @@ p7 <- ADC_POST_Detided_region3 %>% # complete time-series%
              y = 'Sea-level (m)', 
              title = 'ADCIRC Reconstruction of Detided Hourly Sea-Level at Wrightsville Beach') +
         ylim(-1, 2)
-
 
 p8 <- NOAA_OBS_Detided_region3 %>% # complete time-series
         ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
@@ -201,9 +218,13 @@ grid.arrange(p11, p12, ncol = 2)
 
 p13 <- df_mean_ADCIRC %>%
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
-  geom_point(col = 'blue', size = 0.1) +
+  geom_line(col = 'blue', size = 0.1) +
   labs(x = 'Year', y = 'Sea-level (m)', title = 'ADCIRC Reconstruction of Detided Daily Mean Sea-Level at Wrightsville Beach') +
   ylim(-0.5, 0.5)
+
+play13 <- p13 + transition_reveal(1:nrow(df_mean_ADCIRC))
+animate(play13, height = 400, width = 550)
+anim_save(filename = "daily-detided-mean-ADCIRC-wrighstville.gif", path ='./figures')
 
 p14 <- df_mean_NOAA %>%
   ggplot(aes(x = TIME, y = WrightsvilleBeach)) +
@@ -319,7 +340,9 @@ df_max_ADCIRC %>%
   labs(x = 'Year', 
        y = 'Sea-level (m)', 
        title = 'Time-Series for ADCIRC Reconstruction of Detided Daily Mean Sea-Level Maxima') +
-  scale_x_continuous(breaks = c(1980, 1995, 2010))
+  scale_x_continuous(breaks = c(1980, 1995, 2010)) + 
+  transition_time(year) +
+  ease_aes('linear')
 
 df_max_NOAA %>%
   as.tibble() %>%
@@ -349,9 +372,8 @@ df_max_NOAA %>%
   labs(y = 'Station', 
        x = 'sea-level (m)', 
        title = 'Boxplots for Observed (NOAA) Detided Daily Mean Sea-Level Maxima') +
-  xlim(0, 1.5)''''''[
-    
-  ]
+  xlim(0, 1.5) 
+  
 
 # density plots for maxima 
 df_max_ADCIRC %>%

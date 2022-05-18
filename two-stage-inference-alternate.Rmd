@@ -12,6 +12,7 @@ knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F, tidy = TRU
 ```{r load packages}
 library(tidyverse) # data manipulation meta-package
 library(reshape2) # for combining multiple variables into single column
+library(gt) # good looking tables
 library(htmlwidgets) # for exporting plotly figures in html
 library(RColorBrewer) # adds color palattees for plotly
 library(Matrix) # for use in computing Kronecker product
@@ -23,9 +24,10 @@ library(geosphere) # used to compute geodesic distance between lat-lon pairs
 library(gstat) # for (universal) kriging
 library(sp) # for manipulating spatial data
 library(plotly) # for 3D plotting
+library(gganimate) # for creating animations out of ggplot objects
 library(maps) # contains US maps
 library(ggmap) # for manipulating map objects via ggplot
-library(svMisc) # alllows you to track for loop progress
+library(svMisc) # allows you to track for loop progress
 ```
 
 ```{r import data}
@@ -157,6 +159,10 @@ cov_results <- function(gev_results) {
 
 cov_results_ADCIRC <- cov_results(gev_results_ADCIRC)
 cov_results_NOAA <- cov_results(gev_results_NOAA)
+```
+
+```{r collect 1st stage inference output into good looking table}
+
 ```
 
 ```{r specify model hyper parameters: L, d, and p}
