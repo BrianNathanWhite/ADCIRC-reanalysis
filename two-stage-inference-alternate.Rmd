@@ -533,7 +533,7 @@ kriging_pred <- function(new_loc, known_loc, gaussian_results, theta_hat, dist_m
 
 ```{r compute kriging predictions and covariances for known stations}
 known_loc_ADCIRC <- df_meta_region3 %>% slice(26:1) %>% select(lon, lat)
-known_loc_NOAA <- df_meta_region3 %>% slice(26:1) %>% slice(-bad_stations) %>% select(lon, lat)
+known_loc_NOAA <- df_meta_region3 %>% slice(26:1) %>% slice(-(bad_stations - 1)) %>% select(lon, lat)
 
 
 kriging_check_ADCIRC <- list()
@@ -717,7 +717,7 @@ write_csv(return_level_results_NOAA, './data/return_level_results_NOAA.csv')
 x1 <- vector()
 x2 <- vector()
 
-for(i in 1:nrow(df_meta_region3)) {
+for(i in 1:length(kriging_check_ADCIRC)) {
   x1[i] <- return_levels(kriging_check_ADCIRC[[i]][[1]], kriging_check_ADCIRC[[i]][[2]], p)$'1/p return level'
   x2[i] <- return_levels(kriging_check_ADCIRC[[i]][[1]], kriging_check_ADCIRC[[i]][[2]], p)$'sd'
 }
@@ -726,9 +726,29 @@ return_level_results_ADCIRC_check <- tibble(return_levels = x1,
                                             sd = x2,
                                             lower95 = x1 - qnorm(.975)*x2,
                                             upper95 = x1 + qnorm(.975)*x2,
-                                            lon = df_meta_region3[26:1, 4],
-                                            lat = df_meta_region3[26:1, 3],
+                                            lon = known_loc_ADCIRC$lon,
+                                            lat = known_loc_ADCIRC$lat,
                                             stationname = df_meta_region3[26:1, 2])
+
+y1 <- vector()
+y2 <- vector()
+
+for(i in 1:length(kriging_check_NOAA)) {
+  y1[i] <- return_levels(kriging_check_NOAA[[i]][[1]], kriging_check_NOAA[[i]][[2]], p)$'1/p return level'
+  y2[i] <- return_levels(kriging_check_NOAA[[i]][[1]], kriging_check_NOAA[[i]][[2]], p)$'sd'
+}
+
+NOAA_names <- df_meta_region3 %>%
+                slice(26:1) %>%
+                slice(-(bad_stations -1)) # recall index weirdness
+            
+return_level_results_NOAA_check <- tibble(return_levels = y1,
+                                            sd = y2,
+                                            lower95 = y1 - qnorm(.975)*y2,
+                                            upper95 = y1 + qnorm(.975)*y2,
+                                            lon = known_loc_NOAA$lon,
+                                            lat = known_loc_NOAA$lat,
+                                            stationname = NOAA_names$stationname)
 ```
 
 ```{r produce return level plots, warning = F}
@@ -753,10 +773,8 @@ fig1 <- plot_ly(return_level_results_ADCIRC,
         x = ~lon, 
         y = ~lat, 
         z = ~return_levels,
-        #color = ~sd,
-        #colors = 'GnBu',
         marker = list(size = 1, 
-                      color = ~sd, 
+                      color = ~sd,
                       colorscale = 'Portland', 
                       showscale = T, 
                       colorbar = list(len = 0.5, 
@@ -808,8 +826,6 @@ fig1 <- plot_ly(return_level_results_ADCIRC,
                           yaxis = list(title = 'Latitude'), 
                           zaxis = list(title = '100-Year Return Level (m)'))
            )
-fig1
-
 
 # 2D plot (NOAA)
 map2 <- ggplot() + 
@@ -826,46 +842,60 @@ fig2 <- plot_ly(return_level_results_NOAA,
         x = ~lon, 
         y = ~lat, 
         z = ~return_levels,
-        #color = ~sd,
-        mode = 'markers', 
-        type = 'scatter3d', 
         marker = list(size = 1, 
-                      color = 'lightgreen', 
-                      symbol = 104)) %>%
-        # scene = 'scene2') %>%
-    add_trace(data = return_level_results_NOAA, 
+                      color = ~sd,
+                      colorscale = 'Portland', 
+                      showscale = T, 
+                      colorbar = list(len = 0.5, 
+                                      title = list(text = 'Standard Deviation (m)')) 
+                      ),
+        legendgrouptitle = list(text = 'Data'),
+        mode = 'markers', 
+        type = 'scatter3d',
+        name = '100-Year Return Level Surface (NOAA)'
+        ) %>% 
+      add_trace(data = return_level_results_NOAA_check,
+                x = ~lon,
+                y = ~lat,
+                z = ~return_levels,
+                marker = list(color = 'black', 
+                              size = 1,
+                              showscale = F),
+                mode = 'markers',
+                type = 'scatter3d',
+                text = ~stationname,
+                textposition = 'middle right',
+                textfont = list(color = 'black', size = 10),
+                name = 'NOAA Observation Stations') %>%
+      add_trace(data = return_level_results_NOAA, 
             x = ~lon, 
             y = ~lat, 
             z = ~upper95,
             mode = "markers", 
             type = "scatter3d", 
-            marker = list(size = 1, 
-                          color = "violet", 
-                          symbol = 104)) %>%
-    add_trace(data = return_level_results_NOAA, 
+            marker = list(size = 0.5, 
+                          color = 'lightskyblue', 
+                          symbol = 104,
+                          showscale = F),
+            name = 'Upper 95% CI') %>%
+     add_trace(data = return_level_results_NOAA, 
             x = ~lon, 
             y = ~lat, 
             z = ~lower95,
             mode = "markers", 
             type = "scatter3d", 
-            marker = list(size = 1, 
-                          color = "violet", 
-                          symbol = 104)) %>%
-    layout(title = '100-Year Return Level Surface (NOAA) for Daily Mean Sea-Level over the U.S. East Coast', 
-           scene = list(xaxis = list(title = 'Longitude'),
-                        yaxis = list(title = 'Latitude'),
-                        zaxis = list(title ='100-Year Return Level (m)')))
+            marker = list(size = 0.5, 
+                          color = "lightskyblue", 
+                          symbol = 104,
+                          showscale = F),
+            name = 'Lower 95% CI'
+            ) %>%
+      layout(title = '100-Year Return Level Surface (NOAA) for Daily-Mean Sea-Level over the U.S. East Coast',
+             scene = list(xaxis = list(title = 'Longitude'), 
+                          yaxis = list(title = 'Latitude'), 
+                          zaxis = list(title = '100-Year Return Level (m)'))
+           )
 
-
-map1
-map2
 fig1
 fig2
-
-subplot(fig1, fig2) %>% layout(title = "100-Year Return Level Surface for Daily Mean Sea-Level over the U.S. East Coast")
-```
-
-
-```{r export plotly fig in html form, warning = F}
-saveWidget(fig1, "./figures/fig1.html", selfcontained = F, libdir = "lib")
 ```
