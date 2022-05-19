@@ -12,8 +12,10 @@ knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F, tidy = TRU
 ```{r load packages}
 library(tidyverse) # data manipulation meta-package
 library(reshape2) # for combining multiple variables into single column
-library(gt) # good looking tables
-library(htmlwidgets) # for exporting plotly figures in html
+library(naniar) # for replacing value with NA 
+library(flextable) # for pretty table creation
+library(kableExtra) # for pretty table creation; adds onto the kable table from knitr
+library(magick) # for kable export to png
 library(RColorBrewer) # adds color palattees for plotly
 library(Matrix) # for use in computing Kronecker product
 library(matrixcalc) # for use in computing Hadamaard product
@@ -21,8 +23,6 @@ library(blockmatrix) # compute block matrices
 library(mvtnorm) # compute MVN density
 library(extRemes) # compute MLE of GEV model
 library(geosphere) # used to compute geodesic distance between lat-lon pairs
-library(gstat) # for (universal) kriging
-library(sp) # for manipulating spatial data
 library(plotly) # for 3D plotting
 library(gganimate) # for creating animations out of ggplot objects
 library(maps) # contains US maps
@@ -161,8 +161,44 @@ cov_results_ADCIRC <- cov_results(gev_results_ADCIRC)
 cov_results_NOAA <- cov_results(gev_results_NOAA)
 ```
 
-```{r collect 1st stage inference output into good looking table}
+```{r collect 1st stage inference output into flextable}
+# ADCIRC
+stage1_ADCIRC_par <- Reduce(rbind, par_results_ADCIRC)
+stage1_ADCIRC_par <- stage1_ADCIRC_par %>% as.data.frame() %>% round(2)
 
+station <- names(par_results_ADCIRC)
+stage1_ADCIRC_par <- cbind(station, stage1_ADCIRC_par)
+stage1_ADCIRC_par_a <- stage1_ADCIRC_par[1:13, ]
+stage1_ADCIRC_par_b <- stage1_ADCIRC_par[14:26, ]
+
+stage1_ADCIRC_par_a <- stage1_ADCIRC_par_a %>% flextable()
+stage1_ADCIRC_par_b <- stage1_ADCIRC_par_b %>% flextable()
+
+stage1_ADCIRC_par_a <- stage1_ADCIRC_par_a %>% hline()
+stage1_ADCIRC_par_b <- stage1_ADCIRC_par_b %>% hline()
+                                                                      
+stage1_ADCIRC_par_a <- stage1_ADCIRC_par_a %>% add_header_row(top = TRUE, values = c('GEV Parameter Estimate at Each Station (ADCIRC)', rep('', 3))) %>%  merge_at(i = 1, j = 1:4, part = "header") %>% bold(i = 1, bold = TRUE, part = "header") %>% italic(i = 2, part = 'header') %>% fontsize(i = 1, size = 10, part = "header")
+
+stage1_ADCIRC_par_b <- stage1_ADCIRC_par_b %>% add_header_row(top = TRUE, values = c('GEV Parameter Estimates at Each Station (ADCIRC)', rep('', 3))) %>%  merge_at(i = 1, j = 1:4, part = "header") %>% bold(i = 1, bold = TRUE, part = "header") %>% italic(i = 2, part = 'header') %>% fontsize(i = 1, size = 10, part = "header")
+  
+stage1_ADCIRC_par_a
+stage1_ADCIRC_par_b
+
+# NOAA                                  
+stage1_NOAA_par <- Reduce(rbind, par_results_NOAA)
+stage1_NOAA_par <- stage1_NOAA_par %>% as.data.frame() %>% round(3)
+
+station <- names(par_results_NOAA)
+stage1_NOAA_par <- cbind(station, stage1_NOAA_par)
+
+stage1_NOAA_par <- stage1_NOAA_par %>% flextable()
+
+stage1_NOAA_par
+stage1_NOAA_par <- stage1_NOAA_par %>% hline()
+
+stage1_NOAA_par <- stage1_NOAA_par %>% add_header_row(top = TRUE, values = c('GEV Parameter Estimates at Each Station (NOAA)', rep('', 3))) %>% merge_at(i = 1, j = 1:4, part = "header") %>% bold(i = 1, bold = TRUE, part = "header") %>% italic(i = 2, part = 'header') %>% fontsize(i = 1, size = 10, part = 'header')
+
+stage1_NOAA_par
 ```
 
 ```{r specify model hyper parameters: L, d, and p}
@@ -355,8 +391,8 @@ tap <- function(dist_matrix, lambda, L) {
 W_boot_ADCIRC <- W_boot(gamma_ADCIRC, L_ADCIRC)
 W_boot_NOAA <- W_boot(gamma_NOAA, L_NOAA)
 
-tap_ADCIRC <- tap(dist_matrix_ADCIRC, 70, L_ADCIRC)
-tap_NOAA <- tap(dist_matrix_NOAA, 70, L_NOAA)
+tap_ADCIRC <- tap(dist_matrix_ADCIRC, 70, L_ADCIRC) # 700 km
+tap_NOAA <- tap(dist_matrix_NOAA, 70, L_NOAA) # 700 km
 
 # compute tapered non-parametric bootstrap estimate of error covariance matrix
 W_tap <- function(W_boot, tap) {
@@ -488,9 +524,40 @@ gaussian_results <- function(theta_hat, W_tap, dist_matrix, L_data, seed) {
   
 }
 
-gaussian_results_ADCIRC <- gaussian_results(theta_hat_ADCIRC, W_tap_ADCIRC, dist_matrix_ADCIRC, L_ADCIRC, 2)
-gaussian_results_NOAA <- gaussian_results(theta_hat_NOAA, W_tap_NOAA, dist_matrix_NOAA, L_NOAA, 2)
+gaussian_results_ADCIRC <- gaussian_results(theta_hat_ADCIRC, W_tap_ADCIRC, dist_matrix_ADCIRC, L_ADCIRC, 5)
+gaussian_results_NOAA <- gaussian_results(theta_hat_NOAA, W_tap_NOAA, dist_matrix_NOAA, L_NOAA, 5)
 ```
+
+```{r collect 2st stage inference output into kable}
+gaussian_results_ADCIRC 
+gaussian_results_NOAA
+
+stage2_par_ADCIRC <- cbind(data.frame(gaussian_results_ADCIRC$`beta: mean parameter values over R^2`,
+                                gaussian_results_ADCIRC$`rho: range parameters`), 
+                           gaussian_results_ADCIRC$`A: co-regionalization matrix`) %>% round(2)
+
+
+stage2_par_ADCIRC %>% kable(col.names = NULL, 
+                            caption = "Gaussian Process Parameter Estimates (ADCIRC)", 
+                            ) %>% 
+               kable_classic() %>%
+               kable_paper("hover", full_width = F)  %>% 
+               add_header_above(c("$\\hat\\beta$" = 1, "$\\hat\\rho$" = 1, "$\\hat A$" = 3))
+
+
+stage2_par_NOAA <- cbind(data.frame(gaussian_results_NOAA$`beta: mean parameter values over R^2`,
+                                gaussian_results_NOAA$`rho: range parameters`), 
+                           gaussian_results_NOAA$`A: co-regionalization matrix`) %>% round(2)
+
+
+stage2_par_NOAA %>% kable(col.names = NULL, caption = "Gaussian Process Parameter Estimates (NOAA)") %>% 
+               kable_classic() %>%
+               kable_paper("hover", full_width = F)  %>% 
+               add_header_above(c("$\\hat\\beta$" = 1, "$\\hat\\rho$" = 1, "$\\hat A$" = 3))
+
+stage2_par_ADCIRC %>% as_image(file = './figures/stage2_par_ADCIRC.png')
+```
+
 
 ```{r implement kriging}
 # theta_hat is output from 1st stage of inference, par is output from second stage, W is error process covariance
@@ -697,8 +764,8 @@ w1 <- vector() # storage for 1/p return levels
 w2 <- vector() # storage for corresponding sd
 
 for(i in 1:nrow(coastline)) {
-w1[i] <- return_levels(coastline_kriging_NOAA[[i]][[1]], coastline_kriging_ADCIRC[[i]][[2]], p)$'1/p return level'
-w2[i] <- return_levels(coastline_kriging_NOAA[[i]][[1]], coastline_kriging_ADCIRC[[i]][[2]], p)$'sd'
+w1[i] <- return_levels(coastline_kriging_NOAA[[i]][[1]], coastline_kriging_NOAA[[i]][[2]], p)$'1/p return level'
+w2[i] <- return_levels(coastline_kriging_NOAA[[i]][[1]], coastline_kriging_NOAA[[i]][[2]], p)$'sd'
 }
 
 return_level_results_ADCIRC <- tibble(return_levels = v1, 
@@ -775,23 +842,24 @@ map1 <- ggplot() +
 
 # 3D plot (ADCIRC). colorscale options: Greys, YlGnBu, Greens, YlOrRd, Bluered, RdBu, Reds, Blues, Picnic, Rainbow, Portland, Jet, Hot, Blackbody, Earth, Electric, Viridis, Cividis
 
-fig1 <- plot_ly(return_level_results_ADCIRC, 
+fig1 <- plot_ly(return_level_results_ADCIRC, # add return level surface
         x = ~lon, 
         y = ~lat, 
         z = ~return_levels,
         marker = list(size = 1, 
                       color = ~sd,
                       colorscale = 'Portland', 
-                      showscale = T, 
+                      showscale = F, 
                       colorbar = list(len = 0.5, 
-                                      title = list(text = 'Standard Deviation (m)')) 
+                                      itle = list(text = 'Standard Deviation (m)')) 
                       ),
         legendgrouptitle = list(text = 'Data'),
         mode = 'markers', 
         type = 'scatter3d',
-        name = '100-Year Return Level Surface (ADCIRC)'
+        name = '100-Year Return Level Surface (ADCIRC)',
+        scene = 'scene1'
         ) %>% 
-      add_trace(data = return_level_results_ADCIRC_check,
+      add_trace(data = return_level_results_ADCIRC_check, # add stations used to generate surface
                 x = ~lon,
                 y = ~lat,
                 z = ~return_levels,
@@ -803,8 +871,8 @@ fig1 <- plot_ly(return_level_results_ADCIRC,
                 text = ~stationname,
                 textposition = 'middle right',
                 textfont = list(color = 'black', size = 10),
-                name = 'NOAA Observation Stations') %>%
-      add_trace(data = return_level_results_ADCIRC, 
+                name = 'Observation Stations (ADCIRC)') %>%
+      add_trace(data = return_level_results_ADCIRC, # add upper 95% CI
             x = ~lon, 
             y = ~lat, 
             z = ~upper95,
@@ -814,8 +882,8 @@ fig1 <- plot_ly(return_level_results_ADCIRC,
                           color = 'lightskyblue', 
                           symbol = 104,
                           showscale = F),
-            name = 'Upper 95% CI') %>%
-     add_trace(data = return_level_results_ADCIRC, 
+            name = 'Upper 95% CI (ADCIRC)') %>%
+     add_trace(data = return_level_results_ADCIRC, # add lower 95% CI
             x = ~lon, 
             y = ~lat, 
             z = ~lower95,
@@ -825,12 +893,13 @@ fig1 <- plot_ly(return_level_results_ADCIRC,
                           color = "lightskyblue", 
                           symbol = 104,
                           showscale = F),
-            name = 'Lower 95% CI'
+            name = 'Lower 95% CI (ADCIRC)'
             ) %>%
       layout(title = '100-Year Return Level Surface (ADCIRC) for Daily-Mean Sea-Level over the U.S. East Coast',
              scene = list(xaxis = list(title = 'Longitude'), 
                           yaxis = list(title = 'Latitude'), 
-                          zaxis = list(title = '100-Year Return Level (m)'))
+                          zaxis = list(title = '100-Year Return Level (m)')),
+             showlegend = F
            )
 
 # 2D plot (NOAA)
@@ -844,7 +913,7 @@ map2 <- ggplot() +
   scale_color_gradient(low = "blue", high = "red")
 
 # 3D plot (NOAA)
-fig2 <- plot_ly(return_level_results_NOAA, 
+fig2 <- plot_ly(return_level_results_NOAA, # add return level surface
         x = ~lon, 
         y = ~lat, 
         z = ~return_levels,
@@ -853,14 +922,16 @@ fig2 <- plot_ly(return_level_results_NOAA,
                       colorscale = 'Portland', 
                       showscale = T, 
                       colorbar = list(len = 0.5, 
-                                      title = list(text = 'Standard Deviation (m)')) 
+                                       title = list(text = 'Standard Deviation (m)')) 
                       ),
         legendgrouptitle = list(text = 'Data'),
         mode = 'markers', 
         type = 'scatter3d',
-        name = '100-Year Return Level Surface (NOAA)'
+        name = '100-Year Return Level Surface (NOAA)',
+        scene = 'scene2',
+        showlegend = T
         ) %>% 
-      add_trace(data = return_level_results_NOAA_check,
+      add_trace(data = return_level_results_NOAA_check, # add stations used to generate surface
                 x = ~lon,
                 y = ~lat,
                 z = ~return_levels,
@@ -872,8 +943,8 @@ fig2 <- plot_ly(return_level_results_NOAA,
                 text = ~stationname,
                 textposition = 'middle right',
                 textfont = list(color = 'black', size = 10),
-                name = 'NOAA Observation Stations') %>%
-      add_trace(data = return_level_results_NOAA, 
+                name = 'Observation Stations (NOAA)') %>%
+      add_trace(data = return_level_results_NOAA,  # add 95% upper CI
             x = ~lon, 
             y = ~lat, 
             z = ~upper95,
@@ -883,8 +954,8 @@ fig2 <- plot_ly(return_level_results_NOAA,
                           color = 'lightskyblue', 
                           symbol = 104,
                           showscale = F),
-            name = 'Upper 95% CI') %>%
-     add_trace(data = return_level_results_NOAA, 
+            name = 'Upper 95% CI (NOAA)') %>%
+     add_trace(data = return_level_results_NOAA, # add 95% lower CI
             x = ~lon, 
             y = ~lat, 
             z = ~lower95,
@@ -894,7 +965,7 @@ fig2 <- plot_ly(return_level_results_NOAA,
                           color = "lightskyblue", 
                           symbol = 104,
                           showscale = F),
-            name = 'Lower 95% CI'
+            name = 'Lower 95% CI (NOAA)'
             ) %>%
       layout(title = '100-Year Return Level Surface (NOAA) for Daily-Mean Sea-Level over the U.S. East Coast',
              scene = list(xaxis = list(title = 'Longitude'), 
@@ -904,4 +975,33 @@ fig2 <- plot_ly(return_level_results_NOAA,
 
 fig1
 fig2
+
+fig3 <- subplot(fig1, fig2) %>%  layout(title = '100-Year Return Level Surface for Yearly (Detided Daily Mean) Sea-Level Maxima over the U.S. East Coast',
+                                scene = list(domain=list(x=c(-3,-2),y=c(0,1))),
+                                scene2 = list(domain=list(x=c(3,4),y=c(0,1)), 
+                                              xaxis = list(title = 'Longitude'), 
+                                              yaxis = list(title = 'Latitude'),
+                                              zaxis = list(title = '100-Year Return Level (m)')),
+                                annotations = list(list(x = 0.25,  
+                                                        y = .9,  
+                                                        text = "ADCIRC",  
+                                                        xref = "paper",  
+                                                        yref = "paper",  
+                                                        xanchor = "center",  
+                                                        yanchor = "bottom",  
+                                                        showarrow = FALSE 
+                                                        ),
+                                                   list(x = .8,  
+                                                        y = .9,  
+                                                        text = "NOAA",  
+                                                        xref = "paper",  
+                                                        yref = "paper",  
+                                                        xanchor = "center",  
+                                                        yanchor = "bottom",  
+                                                        showarrow = FALSE 
+                                                        )
+                                                    )
+                                            )
+
+fig3
 ```
