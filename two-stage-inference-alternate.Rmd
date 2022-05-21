@@ -12,6 +12,7 @@ knitr::opts_chunk$set(fig.align = 'center', warning = F, message = F, tidy = TRU
 ```{r load packages}
 library(tidyverse) # data manipulation meta-package
 library(reshape2) # for combining multiple variables into single column
+library(pheatmap) # genreate heatmaps
 library(naniar) # for replacing value with NA 
 library(flextable) # for pretty table creation
 library(kableExtra) # for pretty table creation; adds onto the kable table from knitr
@@ -242,16 +243,18 @@ theta_hat_NOAA <- theta_hat(par_results_NOAA, L_NOAA)
 ```
 
 ```{r compute distance matrix: dist_matrix}
+units <- 10^3 # what should you convert the m to? 1000 would translate m to km
+
 dist_matrix_ADCIRC <- df_meta_region3 %>%
   select(lon, lat) %>%
   slice(26:1) %>% # re-arrange stations to match order of parameters fit by fevd
-  distm(fun = distHaversine)/10000 # great-circle-distance via haversine method, assumes spherical earth; units of 10,000 meters
+  distm(fun = distHaversine)/units # great-circle-distance via haversine method, assumes spherical earth; units of 10,000 meters
 
 dist_matrix_NOAA <- df_meta_region3 %>%
   slice(26:1) %>% 
   slice(-(bad_stations - 1)) %>% # re-arrange stations to match order of parameters fit by fevd
   select(lon, lat) %>%
-  distm(fun = distHaversine)/10000 # great-circle-distance via haversine method, assumes spherical earth
+  distm(fun = distHaversine)/units # great-circle-distance via haversine method, assumes spherical earth
 
 rownames(dist_matrix_ADCIRC) <- colnames(df_max_ADCIRC[, -1])
 colnames(dist_matrix_ADCIRC) <- colnames(df_max_ADCIRC[, -1])
@@ -270,6 +273,7 @@ W <- function(cov_results) {
   
 }
 
+set.seed(2)
 # non-parametric bootstrap approach
 gamma <- function(df_max, B, N, L) {
   
@@ -391,8 +395,10 @@ tap <- function(dist_matrix, lambda, L) {
 W_boot_ADCIRC <- W_boot(gamma_ADCIRC, L_ADCIRC)
 W_boot_NOAA <- W_boot(gamma_NOAA, L_NOAA)
 
-tap_ADCIRC <- tap(dist_matrix_ADCIRC, 70, L_ADCIRC) # 700 km
-tap_NOAA <- tap(dist_matrix_NOAA, 70, L_NOAA) # 700 km
+lambda <- 700 # the regularization parmaeter in the Wendland2 function. Units of km. Covariance set to 0 if dist between locations are exceeded
+
+tap_ADCIRC <- tap(dist_matrix_ADCIRC, lambda, L_ADCIRC) # 700 km
+tap_NOAA <- tap(dist_matrix_NOAA, lambda, L_NOAA) # 700 km
 
 # compute tapered non-parametric bootstrap estimate of error covariance matrix
 W_tap <- function(W_boot, tap) {
@@ -405,6 +411,13 @@ W_tap <- function(W_boot, tap) {
 
 W_tap_ADCIRC <- W_tap(W_boot_ADCIRC, tap_ADCIRC)
 W_tap_NOAA <- W_tap(W_boot_NOAA, tap_NOAA)
+```
+
+```{r heatmaps for W estimate}
+# heatmaps for regularized non-parameter estimates of W, the measurement error covariance matrix
+
+pheatmap(W_tap_ADCIRC, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Regularized Non-Parameteric Bootstrap Estimate for W (ADCIRC)') # ADCIRC
+pheatmap(W_tap_NOAA, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Regularized Non-Parameteric Bootstrap Estimate for W (NOAA)') # NOAA
 ```
 
 ```{r compute variance matrix for spatially correlated random effects: S}
@@ -528,6 +541,12 @@ gaussian_results_ADCIRC <- gaussian_results(theta_hat_ADCIRC, W_tap_ADCIRC, dist
 gaussian_results_NOAA <- gaussian_results(theta_hat_NOAA, W_tap_NOAA, dist_matrix_NOAA, L_NOAA, 5)
 ```
 
+```{r}
+pheatmap(S(gaussian_results_ADCIRC$`A: co-regionalization matrix`, gaussian_results_ADCIRC$`rho: range parameters`, dist_matrix_ADCIRC, L_ADCIRC) + W_tap_ADCIRC, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Estimated Covariance Matrix of Multidimensional Gaussian Process (ADCIRC)')
+
+pheatmap(S(gaussian_results_NOAA$`A: co-regionalization matrix`, gaussian_results_NOAA$`rho: range parameters`, dist_matrix_NOAA, L_NOAA) + W_tap_NOAA, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Estimated Covariance Matrix of Multidimensional Gaussian Process (NOAA)')
+```
+
 ```{r collect 2st stage inference output into kable}
 gaussian_results_ADCIRC 
 gaussian_results_NOAA
@@ -555,8 +574,48 @@ stage2_par_NOAA %>% kable(col.names = NULL, caption = "Gaussian Process Paramete
                kable_paper("hover", full_width = F)  %>% 
                add_header_above(c("$\\hat\\beta$" = 1, "$\\hat\\rho$" = 1, "$\\hat A$" = 3))
 
-stage2_par_ADCIRC %>% as_image(file = './figures/stage2_par_ADCIRC.png')
 ```
+
+```{r}
+stage2_par_ADCIRC <- cbind(data.frame(beta = gaussian_results_ADCIRC$`beta: mean parameter values over R^2`,
+                                rho = gaussian_results_ADCIRC$`rho: range parameters`), 
+                           gaussian_results_ADCIRC$`A: co-regionalization matrix`) %>% round(2)
+
+colnames(stage2_par_ADCIRC) <- c('beta', 'rho', 'A1', 'A2', 'A3')
+
+stage2_par_ADCIRC %>% flextable() %>%
+                      add_header_row(top = T, 
+                                     values = c('Gaussian Process Parameter Estimates (ADCIRC)', '', '', '', '')) %>%
+                      set_header_labels(beta = 'beta',
+                                        rho = 'rho',
+                                        A1 = '',
+                                        A2 = 'A',
+                                        A3 = '') %>%
+                      bold(i = 1, bold = T, part = 'header') %>%
+                      merge_at(i = 1, j = 1:5, part = 'header') %>%
+                      fontsize(i = 1, j = 1, size = 9, part = 'header')  %>%
+                      vline(j = 1:2, part = 'body')
+
+stage2_par_NOAA <- cbind(data.frame(beta = gaussian_results_NOAA$`beta: mean parameter values over R^2`,
+                                rho = gaussian_results_NOAA$`rho: range parameters`), 
+                           gaussian_results_NOAA$`A: co-regionalization matrix`) %>% round(2)
+
+colnames(stage2_par_NOAA) <- c('beta', 'rho', 'A1', 'A2', 'A3')
+
+stage2_par_NOAA %>% flextable() %>%
+                      add_header_row(top = T, 
+                                     values = c('Gaussian Process Parameter Estimates (NOAA)', '', '', '', '')) %>%
+                      set_header_labels(beta = 'beta',
+                                        rho = 'rho',
+                                        A1 = '',
+                                        A2 = 'A',
+                                        A3 = '') %>%
+                      bold(i = 1, bold = T, part = 'header') %>%
+                      merge_at(i = 1, j = 1:5, part = 'header') %>%
+                      fontsize(i = 1, j = 1, size = 9, part = 'header') %>%
+                      vline(j = 1:2, part = 'body')
+```
+
 
 
 ```{r implement kriging}
@@ -580,7 +639,7 @@ kriging_pred <- function(new_loc, known_loc, gaussian_results, theta_hat, dist_m
      
      for(j in 1:d) { # for each spatial process
        
-       C[j, j] <- exp(-distHaversine(new_loc, known_loc[i, ])*(10^-4)/rho[j])
+       C[j, j] <- exp(-distHaversine(new_loc, known_loc[i, ])*(units^-1)/rho[j])
        
      }
      
@@ -608,7 +667,7 @@ kriging_pred <- function(new_loc, known_loc, gaussian_results, theta_hat, dist_m
 known_loc_ADCIRC <- df_meta_region3 %>% slice(26:1) %>% select(lon, lat)
 known_loc_NOAA <- df_meta_region3 %>% slice(26:1) %>% slice(-(bad_stations - 1)) %>% select(lon, lat)
 
-
+# ADCIRC
 kriging_check_ADCIRC <- list()
 
 for(i in 1:L_ADCIRC) {
@@ -633,11 +692,12 @@ for(i in 1:L_ADCIRC) {
   
 }
 
+# NOAA
 kriging_check_NOAA <- list()
 
-for(i in 1:L_NOAA) {
+for(i in 1:L_ADCIRC) { # L_NOAA if only checking sites NOAA surface fit on
   
-kriging_check_NOAA[[i]] <- kriging_pred(known_loc_NOAA[i, ], 
+kriging_check_NOAA[[i]] <- kriging_pred(known_loc_ADCIRC[i, ], # known_loc_NOAA[i, ] if only  etc.
                               known_loc_NOAA,
                               gaussian_results_NOAA,
                               theta_hat_NOAA, 
@@ -647,7 +707,7 @@ kriging_check_NOAA[[i]] <- kriging_pred(known_loc_NOAA[i, ],
 
 }
   
-names(kriging_check_NOAA) <- colnames(df_max_NOAA[, -c(1, bad_stations)])
+names(kriging_check_NOAA) <- colnames(df_max_ADCIRC[,-1]) # colnames(df_max_NOAA[, -c(1, bad_stations)]) if only etc.
 
 for(i in 1:L_NOAA) {
   
@@ -819,34 +879,19 @@ return_level_results_NOAA_check <- tibble(return_levels = y1,
                                             sd = y2,
                                             lower95 = y1 - qnorm(.975)*y2,
                                             upper95 = y1 + qnorm(.975)*y2,
-                                            lon = known_loc_NOAA$lon,
-                                            lat = known_loc_NOAA$lat,
-                                            stationname = NOAA_names$stationname)
+                                            lon = known_loc_ADCIRC$lon, #  known_loc_NOAA$lon if only using stations NOAA surface fit with
+                                            lat = known_loc_ADCIRC$lat, # known_loc_NOAA$lat if etc.
+                                            stationname = df_meta_region3[26:1, 2]) # NOAA_names$stationname if etc.
 ```
 
 ```{r produce return level plots, warning = F}
-states <- map_data("state")
-
-east_coast <- states %>%
-  filter(region %in% c('florida', 'georgia', 'south carolina', 'north carolina', 'virginia', 'district of columbia', 'pennsylvania', 'maryland', 'delaware', 'new jersey', 'connecticut', 'new york', 'rhode island', 'massachusetts', 'vermont', 'new hampshire', 'maine' ))
-
-# 2D plot (ADCIRC)
-map1 <- ggplot() + 
-  geom_polygon(data = east_coast, aes(x = long, y = lat, group = group), color = "white") +
-  geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = 0.01) +
-  geom_point(data = return_level_results_ADCIRC, aes(x = lon, y = lat, color = return_levels)) + 
-  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'green', check_overlap = T) +
-  labs(title = '100-Year Return Level Surface for Daily Mean Sea-Level over the U.S. East Coast (ADCIRC)') + 
-  guides(fill = F) +
-  scale_color_gradient(low = "blue", high = "red")
-
 # 3D plot (ADCIRC). colorscale options: Greys, YlGnBu, Greens, YlOrRd, Bluered, RdBu, Reds, Blues, Picnic, Rainbow, Portland, Jet, Hot, Blackbody, Earth, Electric, Viridis, Cividis
 
 fig1 <- plot_ly(return_level_results_ADCIRC, # add return level surface
         x = ~lon, 
         y = ~lat, 
         z = ~return_levels,
-        marker = list(size = 1, 
+        marker = list(size = 0.5, 
                       color = ~sd,
                       colorscale = 'Portland', 
                       showscale = F, 
@@ -902,22 +947,12 @@ fig1 <- plot_ly(return_level_results_ADCIRC, # add return level surface
              showlegend = F
            )
 
-# 2D plot (NOAA)
-map2 <- ggplot() + 
-  geom_polygon(data = east_coast, aes(x = long, y = lat, group = group), color = "white") +
-  geom_point(data = df_meta_region3, aes(x = lon, y = lat), col = 'black', size = 0.01) +
-  geom_point(data = return_level_results_NOAA, aes(x = lon, y = lat, color = return_levels)) + 
-  geom_text(data = df_meta_region3, aes(x = lon, y = lat, label = stationname), size = 2.5, col = 'green', check_overlap = T) +
-  labs(title = '100-Year Return Level Surface for Daily Mean Sea-Level over the U.S. East Coast (NOAA)') + 
-  guides(fill = F) +
-  scale_color_gradient(low = "blue", high = "red")
-
 # 3D plot (NOAA)
 fig2 <- plot_ly(return_level_results_NOAA, # add return level surface
         x = ~lon, 
         y = ~lat, 
         z = ~return_levels,
-        marker = list(size = 1, 
+        marker = list(size = 0.5, 
                       color = ~sd,
                       colorscale = 'Portland', 
                       showscale = T, 
