@@ -29,11 +29,18 @@ library(gganimate) # for creating animations out of ggplot objects
 library(maps) # contains US maps
 library(ggmap) # for manipulating map objects via ggplot
 library(svMisc) # allows you to track for loop progress
+library(fields) # contains image.plot function used for plotting heatmaps etc
 ```
 
 ```{r import data}
 # data covers FEMA region 3
 df_meta_region3 <- read.csv('data/df_meta_region3.csv') # lat-lon data
+
+# raw sea levels
+ADC_POST_region3 <- read.csv('data/ADC_POST_region3.csv') 
+NOAA_OBS_region3 <- read.csv('data/NOAA_OBS_region3.csv')
+
+# detided sea levels
 ADC_POST_Detided_region3 <- read.csv('data/ADC_POST_Detided_region3.csv') #  modeled (ADCIRC) data
 NOAA_OBS_Detided_region3 <- read.csv('data/NOAA_OBS_Detided_region3.csv') # observed (NOAA) data
 ```
@@ -44,7 +51,20 @@ source('./functions/clean_metadata.R') # remove white space from station names
 
 df_meta_region3 <- clean_metadata(df_meta_region3) # remove white space from station names
 
+# raw sea levels
+ADC_POST_region3 <- clean_timeseries(timeseries = ADC_POST_region3, 
+                                             metadata = df_meta_region3 
+                                                            %>% filter(stationname != 'Lewisetta')
+                                             ) %>%
+                                select(1:4, 30:5) %>%
+                                select(1:13, 15:14, 16:30)
 
+NOAA_OBS_region3 <- clean_timeseries(timeseries = NOAA_OBS_region3, metadata = df_meta_region3) %>%
+                              select(-Lewisetta) %>%
+                              select(1:13, 15:14, 16:30) # exclude Lewisetta for consistency with ADCIRC data
+
+
+# detided sea levels
 ADC_POST_Detided_region3 <- clean_timeseries(timeseries = ADC_POST_Detided_region3, 
                                              metadata = df_meta_region3 
                                                             %>% filter(stationname != 'Lewisetta')
@@ -53,49 +73,65 @@ ADC_POST_Detided_region3 <- clean_timeseries(timeseries = ADC_POST_Detided_regio
 
 NOAA_OBS_Detided_region3 <- clean_timeseries(timeseries = NOAA_OBS_Detided_region3, metadata = df_meta_region3) %>%
                               select(-Lewisetta) %>% # exclude Lewisetta for consistency with ADCIRC data
-                              select(c(1:3, 30:4)) # re-arrange stations to match order of columns in ADC_POST_Detided_region3
+                              select(1:4, 30:5) # re-arrange stations to match order of columns in ADC_POST_Detided_region3
 
+# remove unused station
 df_meta_region3 <- df_meta_region3 %>% 
                           filter(stationname != 'Lewisetta') # remove Lewisetta from meta data
 ```
 
 ```{r compute yearly maxima for each station, warning = F}
-# create data frame with yearly maxima over hourly observations for each station
-# df_max_ADCIRC <- ADC_POST_Detided_region3 %>%
-           #  select(-TIME, -month, -day) %>%
-           # group_by(year) %>%
-          # summarise_all(max, na.rm = T) %>%
-          # mutate(year = as.numeric(year))
+# create data frame with yearly maxima over hourly raw observations for each station
+# df_max_ADCIRC <- ADC_POST_region3 %>%
+#           select(-TIME, -month, -day) %>%
+#           group_by(year) %>%
+#          summarise_all(max, na.rm = T) %>%
+#          mutate(year = as.numeric(year))
 
-# create data frame with yearly maxima over hourly observations for each station
-#df_max_NOAA <- NOAA_OBS_Detided_region3 %>%
-                # select(-TIME, -month, -day) %>%
-                # group_by(year) %>%
-                # summarise_all(max, na.rm = T) %>%
-                # mutate(year = as.numeric(year)) %>%
-                # replace_with_na_all(~.x == -Inf)
+# create data frame with yearly maxima over hourly raw observations for each station
+# df_max_NOAA <- NOAA_OBS_region3 %>%
+#               select(-TIME, -month, -day) %>%
+#                 group_by(year) %>%
+#                 summarise_all(max, na.rm = T) %>%
+#                 mutate(year = as.numeric(year)) %>%
+#                 replace_with_na_all(~.x == -Inf)
+
+# create data frame with yearly maxima over hourly detided observations for each station
+df_max_ADCIRC <- ADC_POST_Detided_region3 %>%
+           select(-TIME, -month, -day) %>%
+           group_by(year) %>%
+          summarise_all(max, na.rm = T) %>%
+          mutate(year = as.numeric(year))
+
+# create data frame with yearly maxima over hourly detided observations for each station
+df_max_NOAA <- NOAA_OBS_Detided_region3 %>%
+               select(-TIME, -month, -day) %>%
+                group_by(year) %>%
+                 summarise_all(max, na.rm = T) %>%
+                 mutate(year = as.numeric(year)) %>%
+                 replace_with_na_all(~.x == -Inf)
                 
 
 # compute data frame with daily mean for each station
-df_mean_ADCIRC <- ADC_POST_Detided_region3 %>%
-  group_by(year, month, day) %>%
-  summarise_all(mean, na.rm = T)
+# df_mean_ADCIRC <- ADC_POST_Detided_region3 %>%
+#  group_by(year, month, day) %>%
+#  summarise_all(mean, na.rm = T)
 
-df_mean_NOAA <- NOAA_OBS_Detided_region3 %>%
-  group_by(year, month, day) %>%
-  summarise_all(mean, na.rm = T)
+#df_mean_NOAA <- NOAA_OBS_Detided_region3 %>%
+#  group_by(year, month, day) %>%
+#  summarise_all(mean, na.rm = T)
 
 # create data frame with yearly maxima over daily means for each station
-df_max_ADCIRC <- df_mean_ADCIRC[, -(2:4)] %>%
-  group_by(year) %>%
-  summarise_all(max, na.rm = T) %>%
-  mutate(year = as.numeric(year))
+#df_max_ADCIRC <- df_mean_ADCIRC[, -(2:4)] %>%
+#  group_by(year) %>%
+#  summarise_all(max, na.rm = T) %>%
+#  mutate(year = as.numeric(year))
  
-df_max_NOAA <- df_mean_NOAA[, -(2:4)] %>%
-                  group_by(year) %>%
-                  summarise_all(max, na.rm = T) %>%
-                  mutate(year = as.numeric(year)) %>%
-                  replace_with_na_all(~.x == -Inf)
+#df_max_NOAA <- df_mean_NOAA[, -(2:4)] %>%
+#                  group_by(year) %>%
+#                  summarise_all(max, na.rm = T) %>%
+#                  mutate(year = as.numeric(year)) %>%
+#                  replace_with_na_all(~.x == -Inf)
 ```
 
 ```{r 1st stage of inference: station-by-station non-stationary GEV fit}
@@ -115,7 +151,7 @@ gev_results <- function(df_max) {
 }
 
 # which stations have more than 10 missing years?
-bad_stations <- which(apply(df_max_NOAA[, -1], 2, function(x) sum(is.na(x))) > 10) + 1
+bad_stations <- which(apply(df_max_NOAA[, -1], 2, function(x) sum(is.na(x))) > 10 ) + 1
 
 gev_results_ADCIRC <- gev_results(df_max_ADCIRC)
 gev_results_NOAA <- gev_results(df_max_NOAA[, -bad_stations]) # exclude bad years
@@ -194,7 +230,6 @@ stage1_NOAA_par <- cbind(station, stage1_NOAA_par)
 
 stage1_NOAA_par <- stage1_NOAA_par %>% flextable()
 
-stage1_NOAA_par
 stage1_NOAA_par <- stage1_NOAA_par %>% hline()
 
 stage1_NOAA_par <- stage1_NOAA_par %>% add_header_row(top = TRUE, values = c('GEV Parameter Estimates at Each Station (NOAA)', rep('', 3))) %>% merge_at(i = 1, j = 1:4, part = "header") %>% bold(i = 1, bold = TRUE, part = "header") %>% italic(i = 2, part = 'header') %>% fontsize(i = 1, size = 10, part = 'header')
@@ -273,7 +308,7 @@ W <- function(cov_results) {
   
 }
 
-set.seed(2)
+set.seed(5) #set.seed(2)
 # non-parametric bootstrap approach
 gamma <- function(df_max, B, N, L) {
   
@@ -415,7 +450,6 @@ W_tap_NOAA <- W_tap(W_boot_NOAA, tap_NOAA)
 
 ```{r heatmaps for W estimate}
 # heatmaps for regularized non-parameter estimates of W, the measurement error covariance matrix
-
 pheatmap(W_tap_ADCIRC, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Regularized Non-Parameteric Bootstrap Estimate for W (ADCIRC)') # ADCIRC
 pheatmap(W_tap_NOAA, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Regularized Non-Parameteric Bootstrap Estimate for W (NOAA)') # NOAA
 ```
@@ -533,18 +567,32 @@ gaussian_results <- function(theta_hat, W_tap, dist_matrix, L_data, seed) {
                              'rho: range parameters',
                              'eigenvalues of approximate covariance matrix')
   
+  print(gaussian_process_fit)
+  print(run_time)
   return(gaussian_results)
   
 }
 
-gaussian_results_ADCIRC <- gaussian_results(theta_hat_ADCIRC, W_tap_ADCIRC, dist_matrix_ADCIRC, L_ADCIRC, 5)
-gaussian_results_NOAA <- gaussian_results(theta_hat_NOAA, W_tap_NOAA, dist_matrix_NOAA, L_NOAA, 5)
+gaussian_results_ADCIRC <- gaussian_results(theta_hat_ADCIRC, W_tap_ADCIRC, dist_matrix_ADCIRC, L_ADCIRC, 3)
+gaussian_results_NOAA <- gaussian_results(theta_hat_NOAA, W_tap_NOAA, dist_matrix_NOAA, L_NOAA, 5) # 5 seed originally
 ```
 
 ```{r}
-pheatmap(S(gaussian_results_ADCIRC$`A: co-regionalization matrix`, gaussian_results_ADCIRC$`rho: range parameters`, dist_matrix_ADCIRC, L_ADCIRC) + W_tap_ADCIRC, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Estimated Covariance Matrix of Multidimensional Gaussian Process (ADCIRC)')
+pheatmap(S(gaussian_results_ADCIRC$`A: co-regionalization matrix`, gaussian_results_ADCIRC$`rho: range parameters`, dist_matrix_ADCIRC, L_ADCIRC) + W_tap_ADCIRC, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Estimated Covariance Matrix of Gaussian Process Likelihood (ADCIRC)')
 
-pheatmap(S(gaussian_results_NOAA$`A: co-regionalization matrix`, gaussian_results_NOAA$`rho: range parameters`, dist_matrix_NOAA, L_NOAA) + W_tap_NOAA, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Estimated Covariance Matrix of Multidimensional Gaussian Process (NOAA)')
+pheatmap(S(gaussian_results_NOAA$`A: co-regionalization matrix`, gaussian_results_NOAA$`rho: range parameters`, dist_matrix_NOAA, L_NOAA) + W_tap_NOAA, cluster_rows = FALSE, cluster_cols = FALSE, main = 'Estimated Covariance Matrix of Gaussian Process Likelihood (NOAA)')
+```
+```{r}
+start_time <- Sys.time()
+
+inv_test <- solve(S(gaussian_results_ADCIRC$`A: co-regionalization matrix`, gaussian_results_ADCIRC$`rho: range parameters`, dist_matrix_ADCIRC, L_ADCIRC) + W_tap_ADCIRC)
+
+end_time <- Sys.time()
+
+run_time <- end_time - start_time
+run_time
+
+run_time*334 # time involving computation of covariance inverse
 ```
 
 ```{r collect 2st stage inference output into kable}
@@ -583,7 +631,7 @@ stage2_par_ADCIRC <- cbind(data.frame(beta = gaussian_results_ADCIRC$`beta: mean
 
 colnames(stage2_par_ADCIRC) <- c('beta', 'rho', 'A1', 'A2', 'A3')
 
-stage2_par_ADCIRC %>% flextable() %>%
+stage2_par_ADCIRC <- stage2_par_ADCIRC %>% flextable() %>%
                       add_header_row(top = T, 
                                      values = c('Gaussian Process Parameter Estimates (ADCIRC)', '', '', '', '')) %>%
                       set_header_labels(beta = 'beta',
@@ -602,7 +650,7 @@ stage2_par_NOAA <- cbind(data.frame(beta = gaussian_results_NOAA$`beta: mean par
 
 colnames(stage2_par_NOAA) <- c('beta', 'rho', 'A1', 'A2', 'A3')
 
-stage2_par_NOAA %>% flextable() %>%
+stage2_par_NOAA <- stage2_par_NOAA %>% flextable() %>%
                       add_header_row(top = T, 
                                      values = c('Gaussian Process Parameter Estimates (NOAA)', '', '', '', '')) %>%
                       set_header_labels(beta = 'beta',
@@ -614,6 +662,9 @@ stage2_par_NOAA %>% flextable() %>%
                       merge_at(i = 1, j = 1:5, part = 'header') %>%
                       fontsize(i = 1, j = 1, size = 9, part = 'header') %>%
                       vline(j = 1:2, part = 'body')
+
+stage2_par_ADCIRC
+stage2_par_NOAA
 ```
 
 
@@ -892,11 +943,11 @@ fig1 <- plot_ly(return_level_results_ADCIRC, # add return level surface
         y = ~lat, 
         z = ~return_levels,
         marker = list(size = 0.5, 
-                      color = ~sd,
+                      color = ~return_levels,
                       colorscale = 'Portland', 
                       showscale = F, 
                       colorbar = list(len = 0.5, 
-                                      itle = list(text = 'Standard Deviation (m)')) 
+                                      itle = list(text = '100-Year Return Level (m)')) 
                       ),
         legendgrouptitle = list(text = 'Data'),
         mode = 'markers', 
@@ -953,11 +1004,11 @@ fig2 <- plot_ly(return_level_results_NOAA, # add return level surface
         y = ~lat, 
         z = ~return_levels,
         marker = list(size = 0.5, 
-                      color = ~sd,
+                      color = ~return_levels,
                       colorscale = 'Portland', 
                       showscale = T, 
                       colorbar = list(len = 0.5, 
-                                       title = list(text = 'Standard Deviation (m)')) 
+                                       title = list(text = '100-Year Return Level (m)')) 
                       ),
         legendgrouptitle = list(text = 'Data'),
         mode = 'markers', 
@@ -1008,11 +1059,133 @@ fig2 <- plot_ly(return_level_results_NOAA, # add return level surface
                           zaxis = list(title = '100-Year Return Level (m)'))
            )
 
-fig1
-fig2
 
-fig3 <- subplot(fig1, fig2) %>%  layout(title = '100-Year Return Level Surface for Yearly (Detided Daily Mean) Sea-Level Maxima over the U.S. East Coast',
-                                scene = list(domain=list(x=c(-3,-2),y=c(0,1))),
+fig3 <- plot_ly(return_level_results_ADCIRC, # add return level surface
+        x = ~lon, 
+        y = ~lat, 
+        z = ~return_levels,
+        marker = list(size = 0.5, 
+                      color = ~sd,
+                      colorscale = 'Portland', 
+                      showscale = F, 
+                      colorbar = list(len = 0.5, 
+                                      itle = list(text = 'Standard Deviation (m)')) 
+                      ),
+        legendgrouptitle = list(text = 'Data'),
+        mode = 'markers', 
+        type = 'scatter3d',
+        name = '100-Year Return Level Surface (ADCIRC)',
+        scene = 'scene3'
+        ) %>% 
+      add_trace(data = return_level_results_ADCIRC_check, # add stations used to generate surface
+                x = ~lon,
+                y = ~lat,
+                z = ~return_levels,
+                marker = list(color = 'black', 
+                              size = 1,
+                              showscale = F),
+                mode = 'markers',
+                type = 'scatter3d',
+                text = ~stationname,
+                textposition = 'middle right',
+                textfont = list(color = 'black', size = 10),
+                name = 'Observation Stations (ADCIRC)') %>%
+      add_trace(data = return_level_results_ADCIRC, # add upper 95% CI
+            x = ~lon, 
+            y = ~lat, 
+            z = ~upper95,
+            mode = "markers", 
+            type = "scatter3d", 
+            marker = list(size = 0.5, 
+                          color = 'lightskyblue', 
+                          symbol = 104,
+                          showscale = F),
+            name = 'Upper 95% CI (ADCIRC)') %>%
+     add_trace(data = return_level_results_ADCIRC, # add lower 95% CI
+            x = ~lon, 
+            y = ~lat, 
+            z = ~lower95,
+            mode = "markers", 
+            type = "scatter3d", 
+            marker = list(size = 0.5, 
+                          color = "lightskyblue", 
+                          symbol = 104,
+                          showscale = F),
+            name = 'Lower 95% CI (ADCIRC)'
+            ) %>%
+      layout(title = '100-Year Return Level Surface (ADCIRC) for Daily-Mean Sea-Level over the U.S. East Coast',
+             scene = list(xaxis = list(title = 'Longitude'), 
+                          yaxis = list(title = 'Latitude'), 
+                          zaxis = list(title = '100-Year Return Level (m)')),
+             showlegend = F
+           )
+
+# 3D plot (NOAA)
+fig4 <- plot_ly(return_level_results_NOAA, # add return level surface
+        x = ~lon, 
+        y = ~lat, 
+        z = ~return_levels,
+        marker = list(size = 0.5, 
+                      color = ~sd,
+                      colorscale = 'Portland', 
+                      showscale = T, 
+                      colorbar = list(len = 0.5, 
+                                       title = list(text = 'Standard Deviation (m)')) 
+                      ),
+        legendgrouptitle = list(text = 'Data'),
+        mode = 'markers', 
+        type = 'scatter3d',
+        name = '100-Year Return Level Surface (NOAA)',
+        scene = 'scene4',
+        showlegend = T
+        ) %>% 
+      add_trace(data = return_level_results_NOAA_check, # add stations used to generate surface
+                x = ~lon,
+                y = ~lat,
+                z = ~return_levels,
+                marker = list(color = 'black', 
+                              size = 1,
+                              showscale = F),
+                mode = 'markers',
+                type = 'scatter3d',
+                text = ~stationname,
+                textposition = 'middle right',
+                textfont = list(color = 'black', size = 10),
+                name = 'Observation Stations (NOAA)') %>%
+      add_trace(data = return_level_results_NOAA,  # add 95% upper CI
+            x = ~lon, 
+            y = ~lat, 
+            z = ~upper95,
+            mode = "markers", 
+            type = "scatter3d", 
+            marker = list(size = 0.5, 
+                          color = 'lightskyblue', 
+                          symbol = 104,
+                          showscale = F),
+            name = 'Upper 95% CI (NOAA)') %>%
+     add_trace(data = return_level_results_NOAA, # add 95% lower CI
+            x = ~lon, 
+            y = ~lat, 
+            z = ~lower95,
+            mode = "markers", 
+            type = "scatter3d", 
+            marker = list(size = 0.5, 
+                          color = "lightskyblue", 
+                          symbol = 104,
+                          showscale = F),
+            name = 'Lower 95% CI (NOAA)'
+            ) %>%
+      layout(title = '100-Year Return Level Surface (NOAA) for Daily-Mean Sea-Level over the U.S. East Coast',
+             scene = list(xaxis = list(title = 'Longitude'), 
+                          yaxis = list(title = 'Latitude'), 
+                          zaxis = list(title = '100-Year Return Level (m)'))
+           )
+
+fig_rl <- subplot(fig1, fig2) %>%  layout(title = '100-Year Return Level Surface for Yearly (Detided) Sea-Level Maxima over the U.S. East Coast',
+                                scene1 = list(domain=list(x=c(-3,-2),y=c(0,1)),
+                                              xaxis = list(title = 'Longitude'), 
+                                              yaxis = list(title = 'Latitude'),
+                                              zaxis = list(title = '100-Year Return Level (m)')),
                                 scene2 = list(domain=list(x=c(3,4),y=c(0,1)), 
                                               xaxis = list(title = 'Longitude'), 
                                               yaxis = list(title = 'Latitude'),
@@ -1038,5 +1211,36 @@ fig3 <- subplot(fig1, fig2) %>%  layout(title = '100-Year Return Level Surface f
                                                     )
                                             )
 
-fig3
+fig_sd <- subplot(fig3, fig4) %>%  layout(title = '100-Year Return Level Surface for Yearly (Detided) Sea-Level Maxima over the U.S. East Coast',
+                                scene3 = list(domain=list(x=c(-3,-2),y=c(0,1)),
+                                              xaxis = list(title = 'Longitude'), 
+                                              yaxis = list(title = 'Latitude'),
+                                              zaxis = list(title = '100-Year Return Level (m)')),
+                                scene4 = list(domain=list(x=c(3,4),y=c(0,1)), 
+                                              xaxis = list(title = 'Longitude'), 
+                                              yaxis = list(title = 'Latitude'),
+                                              zaxis = list(title = '100-Year Return Level (m)')),
+                                annotations = list(list(x = 0.25,  
+                                                        y = .9,  
+                                                        text = "ADCIRC",  
+                                                        xref = "paper",  
+                                                        yref = "paper",  
+                                                        xanchor = "center",  
+                                                        yanchor = "bottom",  
+                                                        showarrow = FALSE 
+                                                        ),
+                                                   list(x = .8,  
+                                                        y = .9,  
+                                                        text = "NOAA",  
+                                                        xref = "paper",  
+                                                        yref = "paper",  
+                                                        xanchor = "center",  
+                                                        yanchor = "bottom",  
+                                                        showarrow = FALSE 
+                                                        )
+                                                    )
+                                            )
+
+fig_rl
+fig_sd
 ```
